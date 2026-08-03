@@ -153,6 +153,18 @@ def compute_current_hour(hourly: dict[tuple[date, int], int], today: date) -> in
     return hourly.get((today, now_msk.hour), 0)
 
 
+def compute_today(hourly: dict[tuple[date, int], int], now_msk: datetime) -> int:
+    """Токены с начала суток (00:00) до текущего часа включительно (MSK).
+
+    Running total: включает in-progress current_hour, поэтому значение
+    "допрыгивает" в течение последнего часа. Это сознательно — карточка
+    "Токены / сегодня" по своей природе дубль части графика окна (по
+    запросу TL: "просится карточка, даже если это дубль графика").
+    """
+    today = now_msk.date()
+    return sum(hourly.get((today, h), 0) for h in range(now_msk.hour + 1))
+
+
 def current_window(now_msk: datetime) -> dict:
     """Какой 5h-слот активен сейчас (MSK).
 
@@ -292,6 +304,7 @@ def _y_ticks_for_log(weeks: list[Week]) -> tuple[float, float, list[int]] | None
 
 def render_html(
     current_hour_tokens: int,
+    today_tokens: int,
     window_total: int,
     window_entries: list[tuple[int, int, date]],
     window_label: str,
@@ -555,6 +568,13 @@ def render_html(
           <div class="stat-value">{fmt_tokens(current_hour_tokens)}</div>
           <div class="stat-note">
             Календарный час {now_msk.hour:02d}:00–{now_msk.hour:02d}:59, {today_label[:10]}
+          </div>
+        </article>
+        <article class="stat">
+          <div class="stat-label">Токены / сегодня</div>
+          <div class="stat-value">{fmt_tokens(today_tokens)}</div>
+          <div class="stat-note">
+            С начала суток: 00:00–{now_msk.hour:02d}:59, {today_label[:10]}
           </div>
         </article>
         <article class="stat stat--wide stat-window">
@@ -878,11 +898,13 @@ def main() -> int:
 
     now_msk = datetime.now(MSK)
     current_hour_tokens = compute_current_hour(hourly, today)
+    today_tokens = compute_today(hourly, now_msk)
     window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
     window_wraps = current_window(now_msk)["wraps"]
     weeks = compute_weekly(hourly, today)
 
     log(f"[build] current_hour ({today}, {now_msk.hour:02d}h) = {current_hour_tokens}")
+    log(f"[build] today       (00:00–{now_msk.hour:02d}:59) = {today_tokens}")
     log(f"[build] active_window = {window_label}, total = {window_total}")
     for h, v, d in window_entries:
         log(f"[build]   {d.isoformat()} {h:02d}:00-{h:02d}:59 = {v}")
@@ -894,6 +916,7 @@ def main() -> int:
 
     html = render_html(
         current_hour_tokens,
+        today_tokens,
         window_total,
         window_entries,
         window_label,

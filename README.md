@@ -12,6 +12,7 @@ Task Scheduler trigger.
 ## What it does
 
 - Shows tokens used in the current calendar hour (Europe/Moscow)
+- Shows tokens used since midnight (running total for the current MSK date)
 - Shows tokens used in the **active 5-hour slot** (see "Active window" below)
   with per-hour breakdown
 - Shows a 4-week grouped-bar comparison (Mon–Sun per week, oldest → current)
@@ -118,6 +119,8 @@ Register-ScheduledTask -TaskName "agent-tokens-dashboard-refresh" `
 - **Time zone:** `Europe/Moscow` (UTC+3 year-round, hardcoded constant in
   the script — no DST since 2014)
 - **Calendar hours only:** every aggregate bucket is `HH:00:00`–`HH:59:59`
+- **Today card:** running total since `00:00` MSK up to and including
+  the current in-progress hour; recomputed on every rebuild
 - **Active window:** 5-hour slot, selected by current MSK hour. 4 day
   slots (`03–07`, `08–12`, `13–17`, `18–22`) + 1 night slot (`23–02`,
   4 hours crossing midnight). See PRD §6.3 for the slot table.
