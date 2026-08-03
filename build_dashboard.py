@@ -33,7 +33,19 @@ OUTPUT_PATH: Path = Path(__file__).resolve().parent / "dashboard.html"
 # Хардкод константой, как и просили — без zoneinfo-зависимостей.
 MSK = timezone(timedelta(hours=3))
 
-MORNING_HOURS: tuple[int, ...] = (3, 4, 5, 6, 7)  # 03:00-07:59, PRD §6.3
+# 5-часовые слоты, по которым бьётся "текущее окно".
+# 4 дневных слота (по 5 часов) + 1 ночной (4 часа, переход через полночь).
+# PRD §6.3 — слот выбирается по now.hour, а не фиксирован.
+# Ночной слот асимметричен (4h вместо 5h) — это сознательный компромисс:
+# честное "23:00-02:59" важнее, чем добивать до 5 часов через 22:00 или 03:00.
+WINDOWS: list[dict] = [
+    {"name": "morning",   "hours": [3, 4, 5, 6, 7],     "label": "03:00–07:59", "wraps": False},
+    {"name": "midday",    "hours": [8, 9, 10, 11, 12],  "label": "08:00–12:59", "wraps": False},
+    {"name": "afternoon", "hours": [13, 14, 15, 16, 17], "label": "13:00–17:59", "wraps": False},
+    {"name": "evening",   "hours": [18, 19, 20, 21, 22], "label": "18:00–22:59", "wraps": False},
+    {"name": "night",     "hours": [23, 0, 1, 2],       "label": "23:00–02:59", "wraps": True},
+]
+NIGHT_SLOT = WINDOWS[4]
 WEEK_COUNT: int = 4                                # PRD §6.4
 WEEKDAY_LABELS: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
@@ -140,12 +152,41 @@ def compute_current_hour(hourly: dict[tuple[date, int], int], today: date) -> in
     return hourly.get((today, now_msk.hour), 0)
 
 
-def compute_morning_window(
-    hourly: dict[tuple[date, int], int], today: date
-) -> tuple[int, dict[int, int]]:
-    """Возвращает (total, per_hour_dict) для 03:00-07:59 сегодняшнего дня (MSK)."""
-    per_hour = {h: hourly.get((today, h), 0) for h in MORNING_HOURS}
-    return sum(per_hour.values()), per_hour
+def current_window(now_msk: datetime) -> dict:
+    """Какой 5h-слот активен сейчас (MSK).
+
+    Дневные слоты [3, 8), [8, 13), [13, 18), [18, 23) — half-open: старший час
+    входит в предыдущий слот. Ночной слот [23, 3) — оборачивает полночь
+    (23:00 одного дня + 0..2:00 следующего).
+    """
+    h = now_msk.hour
+    if h >= 23 or h < 3:
+        return NIGHT_SLOT
+    idx = (h - 3) // 5  # 0..3
+    return WINDOWS[idx]
+
+
+def compute_current_window(
+    hourly: dict[tuple[date, int], int], now_msk: datetime
+) -> tuple[int, list[tuple[int, int, date]], str]:
+    """Сумма + per-hour (с датами) + лейбл для активного слота.
+
+    Для ночного слота час 23 берётся из (today - 1 day), часы 0..2 — из today.
+    Для остальных слотов все часы — из today.
+    """
+    today = now_msk.date()
+    window = current_window(now_msk)
+    entries: list[tuple[int, int, date]] = []
+    if window["wraps"]:
+        yesterday = today - timedelta(days=1)
+        for h in window["hours"]:
+            d = yesterday if h == 23 else today
+            entries.append((h, hourly.get((d, h), 0), d))
+    else:
+        for h in window["hours"]:
+            entries.append((h, hourly.get((today, h), 0), today))
+    total = sum(v for _, v, _ in entries)
+    return total, entries, window["label"]
 
 
 def compute_weekly(
@@ -223,14 +264,25 @@ def _y_max_for(weeks: list[Week]) -> int:
 
 def render_html(
     current_hour_tokens: int,
-    morning_total: int,
-    morning_per_hour: dict[int, int],
+    window_total: int,
+    window_entries: list[tuple[int, int, date]],
+    window_label: str,
+    window_wraps: bool,
     weeks: list[Week],
 ) -> str:
     now_msk = datetime.now(MSK)
     today_label = now_msk.strftime("%Y-%m-%d %H:%M MSK")
     week_labels = [w.label for w in weeks]
-    morning_max = max(morning_per_hour.values(), default=0)
+    window_max = max((v for _, v, _ in window_entries), default=0)
+    if window_wraps:
+        window_note = (
+            f"Сумма за {len(window_entries)} ночных часа (UTC+3), "
+            f"с 23:00 вчера по 02:59 сегодня"
+        )
+    else:
+        window_note = (
+            f"Сумма за {len(window_entries)} часов (UTC+3), сегодня"
+        )
     y_max = _y_max_for(weeks)
 
     # Серия для JS-варианта (line / hybrid) — оставлено в HTML для совместимости
@@ -252,8 +304,8 @@ def render_html(
     palette_json = json.dumps(WEEK_PALETTE, ensure_ascii=False)
     y_max_json = json.dumps(y_max)
 
-    # Утренние полоски 03..07 (SVG mini-bar chart).
-    morning_bars_svg = _render_morning_bars(morning_per_hour, morning_max)
+    # Мини-бары по часам активного слота (SVG).
+    window_bars_svg = _render_window_bars(window_entries, window_max)
     # Weekly grouped bars (дефолтный вариант PRD).
     weekly_bars_svg = _render_weekly_bars(weeks, y_max)
 
@@ -347,7 +399,7 @@ def render_html(
       gap: 16px;
       align-items: center;
     }}
-    .stat-morning .morning-bars {{ width: 100%; height: 56px; }}
+    .stat-window .window-bars {{ width: 100%; height: 56px; }}
     .chart-panel {{ padding: 24px; }}
     .chart-head {{
       display: flex;
@@ -427,14 +479,14 @@ def render_html(
             Календарный час {now_msk.hour:02d}:00–{now_msk.hour:02d}:59, {today_label[:10]}
           </div>
         </article>
-        <article class="stat stat--wide stat-morning">
+        <article class="stat stat--wide stat-window">
           <div>
-            <div class="stat-label">Токены в окне 03:00–07:59</div>
-            <div class="stat-value">{fmt_tokens(morning_total)}</div>
-            <div class="stat-note">Сумма за 5 утренних часов (UTC+3), сегодня</div>
+            <div class="stat-label">Токены в окне {window_label}</div>
+            <div class="stat-value">{fmt_tokens(window_total)}</div>
+            <div class="stat-note">{window_note}</div>
           </div>
-          <svg class="morning-bars" viewBox="0 0 240 56" preserveAspectRatio="none" aria-label="Morning window breakdown">
-            {morning_bars_svg}
+          <svg class="window-bars" viewBox="0 0 240 56" preserveAspectRatio="none" aria-label="Current window breakdown">
+            {window_bars_svg}
           </svg>
         </article>
       </section>
@@ -476,24 +528,30 @@ def render_html(
 """
 
 
-def _render_morning_bars(per_hour: dict[int, int], max_value: int) -> str:
-    """5 мини-баров 03..07 в одну строку."""
+def _render_window_bars(
+    entries: list[tuple[int, int, date]], max_value: int
+) -> str:
+    """Мини-бары по часам активного слота в одну строку.
+
+    entries: [(hour, value, date), ...] — порядок как в окне (для ночного
+    23 идёт первым, потом 0/1/2; для дневного — по возрастанию).
+    Кол-во баров адаптивно: 5 для дневных слотов, 4 для ночного.
+    """
     if max_value <= 0:
         max_value = 1
-    hours = list(MORNING_HOURS)
     width, height = 240, 56
     margin_l, margin_r, gap = 8, 8, 6
-    bar_w = (width - margin_l - margin_r - gap * (len(hours) - 1)) / len(hours)
+    n = len(entries)
+    bar_w = (width - margin_l - margin_r - gap * (n - 1)) / n
     bars = []
-    for i, h in enumerate(hours):
+    for i, (h, v, d) in enumerate(entries):
         x = margin_l + i * (bar_w + gap)
-        v = per_hour.get(h, 0)
         h_px = max(2.0, (v / max_value) * (height - 14))
         y = height - h_px
         bars.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h_px:.1f}" rx="3" '
             f'fill="#257179">'
-            f'<title>{h:02d}:00–{h:02d}:59: {fmt_int(v)}</title>'
+            f'<title>{d.isoformat()} {h:02d}:00–{h:02d}:59: {fmt_int(v)}</title>'
             f'</rect>'
         )
         bars.append(
@@ -613,19 +671,30 @@ def main() -> int:
 
     log(f"[build] aggregated {len(hourly)} (date,hour) buckets")
 
+    now_msk = datetime.now(MSK)
     current_hour_tokens = compute_current_hour(hourly, today)
-    morning_total, morning_per_hour = compute_morning_window(hourly, today)
+    window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
+    window_wraps = current_window(now_msk)["wraps"]
     weeks = compute_weekly(hourly, today)
 
-    log(f"[build] current_hour ({today}, {datetime.now(MSK).hour:02d}h) = {current_hour_tokens}")
-    log(f"[build] morning_window total = {morning_total}, per-hour = {morning_per_hour}")
+    log(f"[build] current_hour ({today}, {now_msk.hour:02d}h) = {current_hour_tokens}")
+    log(f"[build] active_window = {window_label}, total = {window_total}")
+    for h, v, d in window_entries:
+        log(f"[build]   {d.isoformat()} {h:02d}:00-{h:02d}:59 = {v}")
     for w in weeks:
         days_repr = ",".join(
             fmt_int(v) if v is not None else "—" for v in w.days
         )
         log(f"[build]   {w.label} ({'current' if w.is_current else 'past  '})  [{days_repr}]")
 
-    html = render_html(current_hour_tokens, morning_total, morning_per_hour, weeks)
+    html = render_html(
+        current_hour_tokens,
+        window_total,
+        window_entries,
+        window_label,
+        window_wraps,
+        weeks,
+    )
 
     if args.no_write:
         sys.stdout.write(html)
