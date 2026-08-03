@@ -1,0 +1,167 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token Dashboard Concepts v2</title>
+  <style>
+    :root {
+      --bg: #f3f4f6;
+      --panel: rgba(255, 255, 255, 0.82);
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: rgba(17, 24, 39, 0.1);
+      --shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI Variable", "Aptos", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(79, 70, 229, 0.08), transparent 24%),
+        linear-gradient(180deg, #fafafa 0%, var(--bg) 100%);
+    }
+    .shell {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 28px auto;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(36px, 6vw, 62px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+    .lede {
+      margin: 0;
+      max-width: 70ch;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 26px;
+    }
+    a.card {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      padding: 22px;
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.76);
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    }
+    a.card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(79, 70, 229, 0.24);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .card h2 .idx {
+      color: var(--muted);
+      font: 700 13px/1 "JetBrains Mono", "Roboto Mono", monospace;
+      letter-spacing: 0.04em;
+    }
+    .card p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: #fff;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <p class="eyebrow">Token Dashboard / Concept Pack v2</p>
+    <h1>Четыре направления, выровненные под описание агента-дизайнера</h1>
+    <p class="lede">
+      Четыре направления. Три базовых — Dark Tech / Bento, Airy SaaS и Hybrid Operator.
+      Четвёртый — Mission&nbsp;Control / Signal Grid, новая модальность: статус-сетка
+      с heatmap-календарём и 24h stream-полосой.
+    </p>
+
+    <section class="grid">
+      <a class="card" href="./concept-ops.html">
+        <h2><span class="idx">01</span>Dark Tech / Bento</h2>
+        <p>Темный technical dashboard для runtime-метрик: моноширинные KPI, микро-спарклайны, muted history и яркий акцент на текущей неделе.</p>
+        <div class="chips">
+          <span class="chip">DevOps</span>
+          <span class="chip">Dark</span>
+          <span class="chip">Mono KPI</span>
+        </div>
+      </a>
+      <a class="card" href="./concept-editorial.html">
+        <h2><span class="idx">02</span>Airy SaaS</h2>
+        <p>Светлый SaaS-экран в духе Stripe/Notion: максимум воздуха, прямой фокус на цифрах, деликатные тени и direct labeling в weekly chart.</p>
+        <div class="chips">
+          <span class="chip">Light</span>
+          <span class="chip">Business</span>
+          <span class="chip">Minimal</span>
+        </div>
+      </a>
+      <a class="card" href="./concept-story.html">
+        <h2><span class="idx">03</span>Hybrid Operator</h2>
+        <p>Промежуточный вариант: светлый интерфейс, но с более инженерным характером, плотнее KPI и более контрастным grouped bar chart.</p>
+        <div class="chips">
+          <span class="chip">Hybrid</span>
+          <span class="chip">Balanced</span>
+          <span class="chip">Pragmatic</span>
+        </div>
+      </a>
+      <a class="card" href="./concept-mission.html">
+        <h2><span class="idx">04</span>Mission Control / Signal Grid</h2>
+        <p>Темная база как у референса, но другая модальность: статус-кодирование (green/amber/red), heatmap-календарь 28 дней + 24h stream, плотная 3×2 сетка и live-индикаторы.</p>
+        <div class="chips">
+          <span class="chip">Mission Control</span>
+          <span class="chip">Heatmap</span>
+          <span class="chip">Status</span>
+        </div>
+      </a>
+    </section>
+  </main>
+</body>
+</html>

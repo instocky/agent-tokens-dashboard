@@ -1,0 +1,90 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Concept 02 - White Runtime</title>
+  <style>
+    :root {
+      --bg: #f6f3ec;
+      --panel: #ffffff;
+      --ink: #171717;
+      --muted: #716a5d;
+      --line: #e5ddd0;
+      --blue-1: #d6e4ff;
+      --blue-2: #afc7ff;
+      --blue-3: #759df4;
+      --blue-4: #263a63;
+      --green: #138a63;
+      --shadow: 0 18px 40px rgba(87, 73, 44, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI Variable", "Aptos", sans-serif; color: var(--ink); background: radial-gradient(circle at top left, rgba(214,228,255,0.4), transparent 28%), linear-gradient(180deg, #fbfaf7 0%, var(--bg) 100%); }
+    .shell { width: min(1240px, calc(100vw - 40px)); margin: 28px auto 40px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .hero { padding: 24px 28px; border-radius: 30px; background: rgba(255,255,255,0.88); box-shadow: var(--shadow); border: 1px solid rgba(229,221,208,0.9); backdrop-filter: blur(12px); }
+    .hero-top { display: flex; justify-content: space-between; align-items: end; gap: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+    h1 { margin: 0; font-size: clamp(34px, 5vw, 50px); line-height: 1; letter-spacing: -0.05em; font-family: Georgia, "Times New Roman", serif; }
+    .hero-meta { display: flex; align-items: center; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .dot-live { width: 8px; height: 8px; border-radius: 999px; background: #10b981; box-shadow: 0 0 0 4px rgba(16,185,129,0.08); }
+    .tz-chip { padding: 8px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fbfaf7; color: #7b6f60; font-size: 12px; font-weight: 700; }
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 24px; background: #fff; border-radius: 22px; }
+    .kpi { padding: 20px 24px; min-height: 170px; position: relative; }
+    .kpi + .kpi { border-left: 1px solid var(--line); }
+    .kpi-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+    .kpi-title { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .delta { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; padding: 6px 12px; border-radius: 999px; background: rgba(19, 138, 99, 0.12); color: var(--green); font-size: 12px; font-weight: 800; }
+    .kpi-value { margin-top: 16px; font-size: 54px; line-height: 1; letter-spacing: -0.05em; font-weight: 700; }
+    .chart-panel { margin-top: 22px; padding: 26px; border-radius: 28px; background: rgba(255,255,255,0.92); box-shadow: var(--shadow); border: 1px solid rgba(229,221,208,0.9); }
+    .eyebrow { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .chart-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 16px; }
+    .chart-title { margin: 0; font-size: 38px; line-height: 0.98; letter-spacing: -0.04em; font-family: Georgia, "Times New Roman", serif; }
+    .chart-meta { display: flex; align-items: center; gap: 18px; color: var(--muted); font-size: 14px; }
+    .toggle { display: inline-flex; padding: 4px; border-radius: 999px; border: 1px solid var(--line); background: #f8f5ef; }
+    .toggle span { padding: 6px 12px; border-radius: 999px; color: #8a7f70; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .toggle .active { background: #242424; color: #fff; }
+    .chart-shell { padding: 20px 18px 18px; border-radius: 22px; background: linear-gradient(180deg, #ffffff, #fcfaf6); box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); border: 1px solid rgba(229,221,208,0.7); }
+    .plot { display: grid; grid-template-columns: 94px 1fr; gap: 18px; }
+    .axis { display: flex; flex-direction: column; justify-content: space-between; align-items: end; padding: 18px 10px 26px 0; color: #8b7d6c; font-size: 13px; background: repeating-linear-gradient(0deg, transparent 0 64px, rgba(229,221,208,0.82) 64px 65px); }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding-top: 18px; background: repeating-linear-gradient(0deg, transparent 0 64px, rgba(229,221,208,0.82) 64px 65px); }
+    .week { display: flex; flex-direction: column; gap: 10px; }
+    .week-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; }
+    .bars { display: flex; align-items: end; gap: 7px; height: 260px; }
+    .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: end; align-items: center; gap: 6px; height: 100%; }
+    .bar-label { font-size: 11px; color: #263a63; font-weight: 700; opacity: 0; }
+    .current .bar-label { opacity: 1; }
+    .bar { width: 100%; border-radius: 10px 10px 0 0; min-height: 6px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45); }
+    .future { background: transparent; border: 1px dashed #ddd2c3; opacity: 0.85; }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; padding-top: 10px; border-top: 1px solid rgba(229,221,208,0.9); color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 980px) { .hero-top, .chart-head { flex-direction: column; align-items: flex-start; } .kpis { grid-template-columns: 1fr; } .kpi + .kpi { border-left: 0; border-top: 1px solid var(--line); } .plot, .grid { grid-template-columns: 1fr; } .axis { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar"><span>Concept 02 / White Runtime</span><a href="./index.html" style="color:inherit; text-decoration:none">← Все концепты</a></div>
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <h1>Расход токенов runtime</h1>
+          <div class="hero-meta"><span class="dot-live"></span><span>Обновление каждые 5 минут · Input + Output</span></div>
+        </div>
+        <div class="tz-chip">Europe/Moscow (UTC+3)</div>
+      </div>
+      <div class="kpis">
+        <article class="kpi"><div class="kpi-head"><div class="kpi-title">Текущий момент<br />15:00–15:59, 2026-08-03</div><div class="delta">8%</div></div><div class="kpi-value">153.5K</div></article>
+        <article class="kpi"><div class="kpi-head"><div class="kpi-title">Сегодня<br />00:00–15:59, 2026-08-03</div><div class="delta">12%</div></div><div class="kpi-value">1.98M</div></article>
+        <article class="kpi"><div class="kpi-head"><div class="kpi-title">Рабочее время<br />13:00–17:59, сегодня</div><div class="delta">5%</div></div><div class="kpi-value">1.07M</div></article>
+      </div>
+    </section>
+    <section class="chart-panel">
+      <div class="chart-head"><div><p class="eyebrow">Weekly Compare</p><h2 class="chart-title">Последние 4 недели, Пн–Вс</h2></div><div class="chart-meta"><span>Шкала: log, 100.0K ... 100.0M токенов · Текущая неделя: <strong>W-32</strong></span><div class="toggle"><span>линейная</span><span class="active">LOG</span></div></div></div>
+      <div class="chart-shell"><div class="plot"><div class="axis"><span>100.0M</span><span>10.0M</span><span>1.0M</span><span>100.0K</span></div><div class="grid">
+        <div class="week"><div class="week-head"><span>W-29</span><span>older</span></div><div class="bars"><div class="bar-wrap"><div class="bar-label">10.0M</div><div class="bar" style="height:78%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">10.8M</div><div class="bar" style="height:82%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">8.0M</div><div class="bar" style="height:70%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">10.9M</div><div class="bar" style="height:83%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">11.6M</div><div class="bar" style="height:86%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">15.2M</div><div class="bar" style="height:96%; background:var(--blue-1)"></div></div><div class="bar-wrap"><div class="bar-label">16.1M</div><div class="bar" style="height:100%; background:var(--blue-1)"></div></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head"><span>W-30</span><span>mid</span></div><div class="bars"><div class="bar-wrap"><div class="bar-label">14.9M</div><div class="bar" style="height:90%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">15.4M</div><div class="bar" style="height:94%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">16.0M</div><div class="bar" style="height:100%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">6.4M</div><div class="bar" style="height:40%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">12.8M</div><div class="bar" style="height:78%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">7.6M</div><div class="bar" style="height:46%; background:var(--blue-2)"></div></div><div class="bar-wrap"><div class="bar-label">13.9M</div><div class="bar" style="height:86%; background:var(--blue-2)"></div></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head"><span>W-31</span><span>near</span></div><div class="bars"><div class="bar-wrap"><div class="bar-label">4.9M</div><div class="bar" style="height:38%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">2.1M</div><div class="bar" style="height:16%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">3.5M</div><div class="bar" style="height:28%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">4.4M</div><div class="bar" style="height:34%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">2.8M</div><div class="bar" style="height:22%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">4.7M</div><div class="bar" style="height:36%; background:var(--blue-3)"></div></div><div class="bar-wrap"><div class="bar-label">0.8M</div><div class="bar" style="height:8%; background:var(--blue-3)"></div></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week current"><div class="week-head"><span>W-32</span><span>current</span></div><div class="bars"><div class="bar-wrap"><div class="bar-label">1.98M</div><div class="bar" style="height:24%; background:var(--blue-4)"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div><div class="bar-wrap"><div class="bar-label">—</div><div class="bar future" style="height:100%"></div></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+      </div></div></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,99 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Concept 01 - Dark Runtime</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #181b22;
+      --panel-2: #1d2129;
+      --ink: #f5f7fb;
+      --muted: rgba(216, 223, 236, 0.62);
+      --line: rgba(255, 255, 255, 0.05);
+      --grid: rgba(148, 163, 184, 0.12);
+      --accent: #8b5cf6;
+      --accent-2: #10b981;
+      --history: rgba(255, 255, 255, 0.18);
+      --history-2: rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Inter", "Segoe UI Variable", sans-serif; color: var(--ink); background: radial-gradient(circle at top right, rgba(139, 92, 246, 0.16), transparent 26%), linear-gradient(180deg, #0e1014 0%, #11141a 100%); }
+    .shell { width: min(1280px, calc(100vw - 36px)); margin: 24px auto 36px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .hero { margin-bottom: 18px; }
+    .panel { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); }
+    .hero-card { padding: 26px 28px 22px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)), radial-gradient(circle at 100% 0%, rgba(139,92,246,0.13), transparent 30%), var(--panel); }
+    .hero-top { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .hero-meta { display: flex; align-items: center; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .dot-live { width: 8px; height: 8px; border-radius: 999px; background: var(--accent-2); box-shadow: 0 0 18px rgba(16,185,129,0.55); }
+    h1 { margin: 0; font-size: clamp(34px, 5vw, 48px); line-height: 1.02; letter-spacing: -0.05em; }
+    .tz-chip { padding: 8px 14px; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; background: rgba(255,255,255,0.02); color: #8ea3c7; font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 12px; }
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }
+    .kpi { padding: 18px 18px 16px; min-height: 168px; background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0)), var(--panel-2); }
+    .kpi-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+    .kpi-title { color: rgba(216, 223, 236, 0.54); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .kpi-time { margin-top: 6px; color: #96a0b5; font-size: 13px; line-height: 1.35; }
+    .delta { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; padding: 5px 10px; border-radius: 999px; background: rgba(16, 185, 129, 0.14); color: #5ee9b5; font-size: 12px; font-weight: 800; }
+    .kpi-value { margin-top: 18px; font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 54px; line-height: 1; letter-spacing: -0.05em; font-weight: 800; }
+    .spark { height: 38px; margin-top: auto; padding-top: 12px; opacity: 0.9; }
+    .spark svg { width: 100%; height: 100%; display: block; }
+    .chart-panel { padding: 24px; }
+    .eyebrow { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; }
+    .chart-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 18px; }
+    .chart-title { margin: 0; font-size: 34px; line-height: 0.98; letter-spacing: -0.04em; }
+    .chart-meta { display: flex; align-items: center; gap: 18px; color: var(--muted); font-size: 14px; }
+    .toggle { display: inline-flex; padding: 4px; border-radius: 999px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }
+    .toggle span { padding: 6px 12px; border-radius: 999px; color: #9ca3af; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .toggle .active { background: rgba(255,255,255,0.94); color: #111827; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+    .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 999px; vertical-align: middle; }
+    .chart-shell { padding: 18px; border-radius: 22px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)), #141820; border: 1px solid rgba(255,255,255,0.04); }
+    .plot { display: grid; grid-template-columns: 94px 1fr; gap: 18px; }
+    .axis { display: flex; flex-direction: column; justify-content: space-between; align-items: end; padding: 18px 10px 26px 0; color: #8e97a8; font-size: 13px; background: repeating-linear-gradient(0deg, transparent 0 68px, var(--grid) 68px 69px); }
+    .weeks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding-top: 18px; background: repeating-linear-gradient(0deg, transparent 0 68px, var(--grid) 68px 69px); }
+    .week { padding: 0 12px 12px; border-radius: 18px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)); border: 1px solid rgba(255,255,255,0.03); }
+    .week.current { background: linear-gradient(180deg, rgba(139,92,246,0.10), rgba(139,92,246,0.03)); border-color: rgba(139,92,246,0.22); box-shadow: inset 0 0 0 1px rgba(139,92,246,0.06); }
+    .week-head { margin-bottom: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; }
+    .bars { display: flex; align-items: end; gap: 7px; height: 260px; }
+    .bar { flex: 1; border-radius: 10px 10px 0 0; min-height: 6px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
+    .history { background: var(--history); }
+    .accent { background: linear-gradient(180deg, #a78bfa, #8b5cf6); }
+    .future { background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.12); opacity: 0.7; box-shadow: none; }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--history-2); color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 980px) { .kpis, .weeks { grid-template-columns: 1fr; } .chart-head, .hero-top { flex-direction: column; align-items: flex-start; } .plot { grid-template-columns: 1fr; } .axis { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar"><span>Concept 01 / Dark Runtime</span><a href="./index.html" style="color:inherit; text-decoration:none">← Все концепты</a></div>
+    <section class="hero">
+      <article class="panel hero-card">
+        <div class="hero-top">
+          <div>
+            <h1>Расход токенов runtime</h1>
+            <div class="hero-meta"><span class="dot-live"></span><span>Обновление каждые 5 минут · Input + Output</span></div>
+          </div>
+          <div class="tz-chip">Europe/Moscow (UTC+3)</div>
+        </div>
+        <section class="kpis">
+          <article class="panel kpi"><div class="kpi-head"><div><div class="kpi-title">Текущий момент</div><div class="kpi-time">15:00–15:59, 2026-08-03</div></div><div class="delta">8%</div></div><div class="kpi-value">153.5K</div><div class="spark"><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polyline fill="none" stroke="var(--accent-2)" stroke-width="2.5" points="0,26 14,24 28,18 42,16 56,12 70,16 84,14 100,10" /></svg></div></article>
+          <article class="panel kpi"><div class="kpi-head"><div><div class="kpi-title">Сегодня</div><div class="kpi-time">00:00–15:59, 2026-08-03</div></div><div class="delta">12%</div></div><div class="kpi-value">1.98M</div><div class="spark"><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="0,32 14,31 28,28 42,24 56,18 70,16 84,12 100,8" /></svg></div></article>
+          <article class="panel kpi"><div class="kpi-head"><div><div class="kpi-title">Рабочее время</div><div class="kpi-time">13:00–17:59, сегодня</div></div><div class="delta">5%</div></div><div class="kpi-value">1.07M</div><div class="spark"><svg viewBox="0 0 100 40" preserveAspectRatio="none"><polyline fill="none" stroke="#8ea3c7" stroke-width="2.5" points="0,20 14,14 28,8 42,26 56,34 70,34 84,34 100,34" /></svg></div></article>
+        </section>
+      </article>
+    </section>
+    <section class="panel chart-panel">
+      <div class="chart-head"><div><p class="eyebrow">Weekly Compare</p><h2 class="chart-title">Последние 4 недели, Пн–Вс</h2></div><div class="chart-meta"><span>Шкала: log, 100.0K ... 100.0M токенов · Текущая неделя: <strong>W-32</strong></span><div class="toggle"><span>линейная</span><span class="active">LOG</span></div></div></div>
+      <div class="legend"><span><i class="dot" style="background:rgba(255,255,255,0.16)"></i>W-29 / W-30 / W-31 history</span><span><i class="dot" style="background:var(--accent)"></i>W-32 current</span></div>
+      <div class="chart-shell"><div class="plot"><div class="axis"><span>100.0M</span><span>10.0M</span><span>1.0M</span><span>100.0K</span></div><div class="weeks">
+        <div class="week"><div class="week-head">W-29</div><div class="bars"><div class="bar history" style="height:78%"></div><div class="bar history" style="height:82%"></div><div class="bar history" style="height:70%"></div><div class="bar history" style="height:83%"></div><div class="bar history" style="height:86%"></div><div class="bar history" style="height:96%"></div><div class="bar history" style="height:100%"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head">W-30</div><div class="bars"><div class="bar history" style="height:90%"></div><div class="bar history" style="height:94%"></div><div class="bar history" style="height:100%"></div><div class="bar history" style="height:40%"></div><div class="bar history" style="height:78%"></div><div class="bar history" style="height:46%"></div><div class="bar history" style="height:86%"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head">W-31</div><div class="bars"><div class="bar history" style="height:38%"></div><div class="bar history" style="height:16%"></div><div class="bar history" style="height:28%"></div><div class="bar history" style="height:34%"></div><div class="bar history" style="height:22%"></div><div class="bar history" style="height:36%"></div><div class="bar history" style="height:8%"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week current"><div class="week-head">W-32</div><div class="bars"><div class="bar accent" style="height:24%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+      </div></div></div>
+    </section>
+  </main>
+</body>
+</html>

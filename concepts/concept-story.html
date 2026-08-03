@@ -1,0 +1,79 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Concept 03 - Hybrid Operator</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --shadow: 0 16px 42px rgba(15, 23, 42, 0.06);
+      --accent: #4f46e5;
+      --history-1: #cbd5e1;
+      --history-2: #94a3b8;
+      --history-3: #64748b;
+      --green: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI Variable", "Aptos", sans-serif; color: var(--ink); background: radial-gradient(circle at top left, rgba(79, 70, 229, 0.08), transparent 24%), linear-gradient(180deg, #ffffff 0%, var(--bg) 100%); }
+    .shell { width: min(1240px, calc(100vw - 40px)); margin: 28px auto 40px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .panel { border: 1px solid var(--line); border-radius: 26px; background: var(--panel); box-shadow: var(--shadow); }
+    .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; margin-bottom: 18px; }
+    .intro { padding: 26px 28px; background: radial-gradient(circle at 100% 0%, rgba(79,70,229,0.10), transparent 28%), #fff; }
+    .eyebrow { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    h1 { margin: 0; font-size: clamp(34px, 5vw, 52px); line-height: 0.98; letter-spacing: -0.04em; }
+    .lede { margin: 14px 0 0; max-width: 58ch; color: var(--muted); font-size: 16px; line-height: 1.65; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .stat { padding: 18px; min-height: 220px; display: flex; flex-direction: column; justify-content: space-between; }
+    .stat-title { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+    .stat-value { margin-top: 10px; font-size: 52px; line-height: 1; letter-spacing: -0.05em; font-weight: 800; }
+    .stat-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 6px 10px; border-radius: 999px; background: rgba(22, 163, 74, 0.1); color: var(--green); font-size: 12px; font-weight: 700; }
+    .micro { display: flex; gap: 8px; align-items: end; height: 48px; }
+    .micro span { flex: 1; border-radius: 6px 6px 0 0; background: linear-gradient(180deg, rgba(79,70,229,0.8), rgba(79,70,229,0.28)); min-height: 4px; }
+    .chart-panel { padding: 24px; }
+    .chart-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 18px; }
+    .chart-title { margin: 0; font-size: 36px; line-height: 0.98; letter-spacing: -0.04em; }
+    .chart-note { color: var(--muted); font-size: 14px; line-height: 1.5; text-align: right; }
+    .weeks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 18px; border-radius: 22px; background: repeating-linear-gradient(0deg, transparent 0 66px, rgba(226,232,240,0.9) 66px 67px), #fbfdff; }
+    .week { padding: 16px 12px 12px; border-radius: 18px; background: rgba(255,255,255,0.66); border: 1px solid rgba(226,232,240,0.8); }
+    .week.current { background: rgba(79,70,229,0.06); border-color: rgba(79,70,229,0.22); }
+    .week-head { margin-bottom: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; }
+    .bars { display: flex; align-items: end; gap: 7px; height: 260px; }
+    .bar { flex: 1; border-radius: 8px 8px 0 0; min-height: 6px; }
+    .future { background: transparent; border: 1px dashed #cbd5e1; opacity: 0.75; }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; margin-top: 10px; color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 980px) { .hero { grid-template-columns: 1fr; } .stats, .weeks { grid-template-columns: 1fr; } .chart-head { flex-direction: column; align-items: flex-start; } .chart-note { text-align: left; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar"><span>Concept 03 / Hybrid Operator</span><a href="./index.html" style="color:inherit; text-decoration:none">← Все концепты</a></div>
+    <section class="hero">
+      <article class="panel intro">
+        <p class="eyebrow">Balanced Direction</p>
+        <h1>Светлый интерфейс, но без потери технического характера</h1>
+        <p class="lede">Компромисс между двумя вашими направлениями: воздух и чистота из SaaS-подхода, но более плотные KPI, мини-ритм внутри карточек и более собранный grouped bar chart для weekly compare.</p>
+      </article>
+      <section class="stats">
+        <article class="panel stat"><div><div class="stat-title">Текущий момент</div><div class="stat-value">153.5K</div><div class="stat-badge">↑ steady</div></div><div class="micro"><span style="height:28%"></span><span style="height:34%"></span><span style="height:48%"></span><span style="height:62%"></span><span style="height:58%"></span><span style="height:76%"></span></div></article>
+        <article class="panel stat"><div><div class="stat-title">Сегодня</div><div class="stat-value">1.98M</div><div class="stat-badge">↑ 12%</div></div><div class="micro"><span style="height:12%"></span><span style="height:16%"></span><span style="height:24%"></span><span style="height:36%"></span><span style="height:52%"></span><span style="height:82%"></span></div></article>
+        <article class="panel stat"><div><div class="stat-title">Рабочее время</div><div class="stat-value">1.07M</div><div class="stat-badge">↑ active slot</div></div><div class="micro"><span style="height:62%"></span><span style="height:100%"></span><span style="height:28%"></span><span style="height:4%; opacity:.3"></span><span style="height:4%; opacity:.3"></span><span style="height:4%; opacity:.3"></span></div></article>
+      </section>
+    </section>
+    <section class="panel chart-panel">
+      <div class="chart-head"><div><p class="eyebrow">Weekly Compare</p><h2 class="chart-title">Последние 4 недели, Пн–Вс</h2></div><div class="chart-note">Светлая база для истории<br />Контрастный акцент только у W-32</div></div>
+      <div class="weeks">
+        <div class="week"><div class="week-head">W-29</div><div class="bars"><div class="bar" style="height:78%; background:var(--history-1)"></div><div class="bar" style="height:82%; background:var(--history-1)"></div><div class="bar" style="height:70%; background:var(--history-1)"></div><div class="bar" style="height:83%; background:var(--history-1)"></div><div class="bar" style="height:86%; background:var(--history-1)"></div><div class="bar" style="height:96%; background:var(--history-1)"></div><div class="bar" style="height:100%; background:var(--history-1)"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head">W-30</div><div class="bars"><div class="bar" style="height:90%; background:var(--history-2)"></div><div class="bar" style="height:94%; background:var(--history-2)"></div><div class="bar" style="height:100%; background:var(--history-2)"></div><div class="bar" style="height:40%; background:var(--history-2)"></div><div class="bar" style="height:78%; background:var(--history-2)"></div><div class="bar" style="height:46%; background:var(--history-2)"></div><div class="bar" style="height:86%; background:var(--history-2)"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week"><div class="week-head">W-31</div><div class="bars"><div class="bar" style="height:38%; background:var(--history-3)"></div><div class="bar" style="height:16%; background:var(--history-3)"></div><div class="bar" style="height:28%; background:var(--history-3)"></div><div class="bar" style="height:34%; background:var(--history-3)"></div><div class="bar" style="height:22%; background:var(--history-3)"></div><div class="bar" style="height:36%; background:var(--history-3)"></div><div class="bar" style="height:8%; background:var(--history-3)"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+        <div class="week current"><div class="week-head">W-32</div><div class="bars"><div class="bar" style="height:24%; background:var(--accent)"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div><div class="bar future" style="height:100%"></div></div><div class="days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

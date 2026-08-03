@@ -1,0 +1,499 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Concept 04 — Mission Control / Signal Grid</title>
+  <style>
+    /*
+      Concept 04 — Mission Control / Signal Grid
+      ────────────────────────────────────────────
+      Наследует у reference (concept-ops):
+        • тёмная база, моноширинные цифры, sparkline внутри KPI.
+      Дифференциация (vs ops / editorial / story):
+        • статус-кодирование (green / amber / red) поверх единой темы;
+        • chart-модальность: heatmap-календарь 28 дней + 24h today strip
+          вместо grouped bar (как в референсе);
+        • плотная статус-сетка 3×2 вместо трёх широких KPI;
+        • live-pulse индикатор и data-теги как у mission-control терминалов.
+    */
+    :root {
+      --bg:        #0a0e14;
+      --panel:     #11161f;
+      --panel-2:   #161c27;
+      --line:      rgba(255, 255, 255, 0.06);
+      --line-2:    rgba(255, 255, 255, 0.10);
+      --ink:       #f5f7fb;
+      --muted:     #8a96a8;
+      --muted-2:   #5d6878;
+      --grid:      rgba(148, 163, 184, 0.10);
+
+      --live:      #10b981;     /* emerald-500 */
+      --warm:      #f59e0b;     /* amber-500  */
+      --alert:     #ef4444;     /* red-500    */
+      --accent:    #38bdf8;     /* sky-400    */
+
+      /* heatmap scale (5 steps, 0 = пусто) */
+      --hm-0: rgba(255, 255, 255, 0.03);
+      --hm-1: #1e3a4a;
+      --hm-2: #1d6f5b;
+      --hm-3: #14a37a;
+      --hm-4: #4ade80;
+
+      --mono: "JetBrains Mono", "Roboto Mono", "Cascadia Mono", Consolas, monospace;
+      --sans: "Inter", "Segoe UI Variable", "Aptos", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(56, 189, 248, 0.10), transparent 40%),
+        radial-gradient(ellipse at 100% 100%, rgba(16, 185, 129, 0.07), transparent 45%),
+        linear-gradient(180deg, #0a0e14 0%, #07090d 100%);
+      min-height: 100vh;
+    }
+    .shell { width: min(1240px, calc(100vw - 40px)); margin: 24px auto 40px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 16px; margin-bottom: 16px;
+      color: var(--muted); font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.18em;
+    }
+    .topbar a { color: inherit; text-decoration: none; border-bottom: 1px dashed var(--line-2); }
+    .topbar a:hover { color: var(--ink); }
+
+    /* ─── Panel base ─────────────────────────────────────────── */
+    .panel {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0)), var(--panel);
+    }
+    .panel::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+      background: var(--live); border-radius: 14px 0 0 14px;
+    }
+    .panel[data-status="warm"]::before  { background: var(--warm); }
+    .panel[data-status="alert"]::before { background: var(--alert); }
+    .panel[data-status="cool"]::before  { background: var(--accent); }
+
+    /* ─── Hero ──────────────────────────────────────────────── */
+    .hero {
+      display: grid; grid-template-columns: 1.4fr 1fr 1fr;
+      gap: 14px; margin-bottom: 14px;
+    }
+    .hero-card { padding: 22px 24px 20px; }
+    .hero-title-row { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: clamp(30px, 4.4vw, 44px); line-height: 1; letter-spacing: -0.04em; }
+    .eyebrow { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; }
+    .lede { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; max-width: 56ch; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+    .tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 9px; border-radius: 6px;
+      border: 1px solid var(--line-2);
+      font: 600 10.5px/1 var(--mono);
+      color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .tag .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--live); box-shadow: 0 0 10px var(--live); }
+    .tag.live { color: #6ee7b7; border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.06); }
+    .tag.warm { color: #fcd34d; border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
+    .tag.cool { color: #7dd3fc; border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.06); }
+
+    .tz-chip {
+      padding: 7px 12px; border: 1px solid var(--line-2);
+      border-radius: 8px; background: var(--panel-2);
+      color: var(--muted); font: 600 11px/1 var(--mono);
+      text-transform: uppercase; letter-spacing: 0.10em;
+      white-space: nowrap;
+    }
+
+    /* Big number KPI */
+    .kpi-big { display: flex; flex-direction: column; gap: 6px; }
+    .kpi-big .v {
+      font: 800 64px/0.95 var(--mono);
+      letter-spacing: -0.04em;
+      color: var(--ink);
+    }
+    .kpi-big .v small { font-size: 0.42em; color: var(--muted); font-weight: 700; margin-left: 6px; }
+    .kpi-big .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+    .kpi-big .meta strong { color: var(--ink); font-weight: 700; }
+
+    .kpi-side { display: flex; flex-direction: column; gap: 14px; }
+    .kpi-side .v { font: 800 36px/1 var(--mono); letter-spacing: -0.03em; }
+    .kpi-side .v small { font-size: 0.40em; color: var(--muted); font-weight: 700; margin-left: 4px; }
+    .kpi-side .meta { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+    .kpi-side .label { color: var(--muted); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+
+    .delta { display: inline-flex; align-items: center; gap: 4px; font: 700 11px/1 var(--mono); }
+    .delta.up   { color: #6ee7b7; }
+    .delta.down { color: #fca5a5; }
+    .delta.flat { color: var(--muted); }
+
+    .spark { height: 56px; margin-top: 16px; }
+    .spark svg { width: 100%; height: 100%; display: block; }
+
+    /* Health ring */
+    .ring { display: flex; align-items: center; gap: 14px; }
+    .ring svg { width: 76px; height: 76px; flex-shrink: 0; }
+    .ring .ring-num { font: 800 32px/1 var(--mono); letter-spacing: -0.03em; }
+    .ring .ring-sub { color: var(--muted); font: 600 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.10em; margin-top: 4px; }
+
+    /* ─── Status grid (3×2) ─────────────────────────────────── */
+    .status-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 14px; margin-bottom: 14px;
+    }
+    .stat-cell { padding: 16px 18px; }
+    .stat-cell .label { color: var(--muted); font: 700 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.16em; }
+    .stat-cell .v { font: 700 30px/1 var(--mono); letter-spacing: -0.03em; margin-top: 8px; }
+    .stat-cell .v small { font-size: 0.42em; color: var(--muted); margin-left: 3px; }
+    .stat-cell .row { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .stat-cell .row .meta { color: var(--muted); font: 500 11px/1.4 var(--mono); }
+    .bar-mini { display: flex; gap: 3px; align-items: end; height: 28px; }
+    .bar-mini span { flex: 1; background: rgba(56, 189, 248, 0.55); border-radius: 2px 2px 0 0; min-height: 2px; }
+    .bar-mini.warm span  { background: rgba(245, 158, 11, 0.65); }
+    .bar-mini.alert span { background: rgba(239, 68, 68, 0.65); }
+
+    /* ─── Heatmap calendar ──────────────────────────────────── */
+    .heatmap-panel { padding: 22px 24px; }
+    .heat-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 16px; }
+    .heat-title { margin: 0; font-size: 24px; line-height: 1; letter-spacing: -0.02em; }
+    .heat-scale { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 600 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.10em; }
+    .heat-scale .cells { display: inline-flex; gap: 3px; }
+    .heat-scale .cells span { width: 14px; height: 14px; border-radius: 3px; }
+
+    .heatmap { display: grid; grid-template-columns: 18px 1fr; gap: 6px 8px; align-items: center; }
+    .heatmap .wk-label { color: var(--muted); font: 600 10.5px/1 var(--mono); text-align: right; padding-right: 4px; }
+    .heatmap .row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+    .cell {
+      aspect-ratio: 1; border-radius: 4px;
+      background: var(--hm-0);
+      border: 1px solid rgba(255,255,255,0.02);
+      transition: transform 0.1s ease;
+    }
+    .cell.l1 { background: var(--hm-1); }
+    .cell.l2 { background: var(--hm-2); }
+    .cell.l3 { background: var(--hm-3); }
+    .cell.l4 { background: var(--hm-4); box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35); }
+    .cell.now { outline: 1.5px solid var(--ink); outline-offset: 1px; }
+    .cell.empty { background: transparent; border: 1px dashed var(--line); }
+    .day-labels { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 8px; padding-left: 26px; }
+    .day-labels span { color: var(--muted); font: 600 10.5px/1 var(--mono); text-align: center; text-transform: uppercase; letter-spacing: 0.08em; }
+
+    /* ─── Today 24h strip ───────────────────────────────────── */
+    .today-panel { padding: 18px 24px 22px; margin-top: 14px; }
+    .today-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 14px; }
+    .today-title { margin: 0; font-size: 18px; line-height: 1; letter-spacing: -0.02em; }
+    .today-legend { display: flex; align-items: center; gap: 14px; color: var(--muted); font: 600 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.10em; }
+    .today-legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+    .today-strip {
+      position: relative; height: 130px;
+      display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px;
+      align-items: end;
+      padding: 8px 0 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .today-strip::before {
+      content: ""; position: absolute; left: 0; right: 0; top: 50%;
+      border-top: 1px dashed rgba(255,255,255,0.06);
+    }
+    .today-bar {
+      position: relative; height: var(--h, 8%);
+      background: linear-gradient(180deg, var(--accent), rgba(56, 189, 248, 0.45));
+      border-radius: 2px 2px 0 0;
+    }
+    .today-bar.peak { background: linear-gradient(180deg, var(--live), rgba(16, 185, 129, 0.45)); box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25); }
+    .today-bar.future { background: rgba(255, 255, 255, 0.04); border: 1px dashed rgba(255,255,255,0.10); }
+    .today-bar .lbl {
+      position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+      color: var(--muted); font: 600 9.5px/1 var(--mono);
+    }
+    .today-bar.peak .lbl { color: #6ee7b7; }
+
+    .now-marker {
+      position: absolute; top: -4px; bottom: 22px; width: 1.5px;
+      background: var(--ink); box-shadow: 0 0 8px rgba(255,255,255,0.5);
+    }
+    .now-marker::before {
+      content: "NOW"; position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+      font: 700 9.5px/1 var(--mono); color: var(--ink);
+      background: var(--bg); padding: 2px 4px;
+    }
+
+    /* ─── Footer / data line ────────────────────────────────── */
+    .data-line {
+      margin-top: 16px; padding: 0 24px;
+      color: var(--muted-2); font: 500 11px/1.5 var(--mono);
+      display: flex; justify-content: space-between; gap: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .status-grid { grid-template-columns: repeat(2, 1fr); }
+      .heatmap .wk-label { font-size: 9.5px; }
+      .heat-head, .today-head { flex-direction: column; align-items: flex-start; }
+    }
+    @media (max-width: 640px) {
+      .status-grid { grid-template-columns: 1fr; }
+      .today-bar .lbl { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <span>Concept 04 / Mission Control — Signal Grid</span>
+      <a href="./index.html">← Все концепты</a>
+    </div>
+
+    <!-- ─── Hero: 1 большой KPI + 2 боковых ────────────────── -->
+    <section class="hero">
+      <article class="panel hero-card">
+        <div class="hero-title-row">
+          <div>
+            <p class="eyebrow">Runtime · Token Stream</p>
+            <h1>Текущий момент</h1>
+            <p class="lede">Live-поток input&nbsp;+&nbsp;output токенов. Обновление каждые 5 минут, текущая выборка — календарный час 15:00–15:59 (MSK).</p>
+            <div class="tags">
+              <span class="tag live"><span class="dot"></span>LIVE</span>
+              <span class="tag cool">MSK · UTC+3</span>
+              <span class="tag">5&nbsp;MIN&nbsp;POLL</span>
+              <span class="tag">Input + Output</span>
+            </div>
+          </div>
+          <div class="tz-chip">2026-08-03 · 15:59</div>
+        </div>
+        <div class="kpi-big">
+          <div class="v">153.5K<small>TOK</small></div>
+          <div class="meta"><strong>15:00–15:59</strong> · &uarr; <span class="delta up">+8%</span> к среднему за этот час на прошлой неделе</div>
+          <div class="spark" aria-hidden="true">
+            <svg viewBox="0 0 600 56" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gradLive" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.35" />
+                  <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+                </linearGradient>
+              </defs>
+              <path d="M0,42 L40,38 L80,30 L120,28 L160,22 L200,18 L240,24 L280,16 L320,20 L360,12 L400,14 L440,8 L480,10 L520,6 L560,4 L600,2 L600,56 L0,56 Z" fill="url(#gradLive)" />
+              <polyline fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                points="0,42 40,38 80,30 120,28 160,22 200,18 240,24 280,16 320,20 360,12 400,14 440,8 480,10 520,6 560,4 600,2" />
+            </svg>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel hero-card" data-status="cool">
+        <p class="eyebrow">System Health</p>
+        <div class="ring">
+          <svg viewBox="0 0 76 76">
+            <circle cx="38" cy="38" r="30" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="6" />
+            <circle cx="38" cy="38" r="30" fill="none" stroke="#38bdf8" stroke-width="6"
+              stroke-dasharray="188.5" stroke-dashoffset="11.3" stroke-linecap="round"
+              transform="rotate(-90 38 38)" />
+          </svg>
+          <div>
+            <div class="ring-num">94%</div>
+            <div class="ring-sub">UPTIME · 30D</div>
+          </div>
+        </div>
+        <div class="tags" style="margin-top: 14px">
+          <span class="tag live"><span class="dot"></span>OK</span>
+          <span class="tag">2 события &lt; 1m</span>
+        </div>
+      </article>
+
+      <article class="panel hero-card" data-status="warm">
+        <p class="eyebrow">Дельта к прогнозу</p>
+        <div class="kpi-side">
+          <div>
+            <div class="v">+12%<small>VS FCST</small></div>
+            <div class="meta">vs скользящее среднее · 7d</div>
+          </div>
+          <div class="tags">
+            <span class="tag warm">WARM</span>
+            <span class="tag">14:00 spike</span>
+          </div>
+          <div class="spark" aria-hidden="true" style="height: 38px; margin-top: 4px">
+            <svg viewBox="0 0 100 38" preserveAspectRatio="none">
+              <polyline fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"
+                points="0,30 12,28 24,22 36,18 48,14 60,8 72,12 84,16 100,20" />
+            </svg>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- ─── Status grid: 3×2 ──────────────────────────────── -->
+    <section class="status-grid">
+      <article class="panel stat-cell">
+        <div class="label">Сегодня</div>
+        <div class="v">1.98M<small>TOK</small></div>
+        <div class="row">
+          <div class="meta">00:00 – 15:59 MSK</div>
+          <div class="bar-mini"><span style="height:30%"></span><span style="height:42%"></span><span style="height:55%"></span><span style="height:68%"></span><span style="height:80%"></span><span style="height:100%"></span></div>
+        </div>
+      </article>
+      <article class="panel stat-cell" data-status="cool">
+        <div class="label">Рабочее окно · 13–17</div>
+        <div class="v">1.07M<small>TOK</small></div>
+        <div class="row">
+          <div class="meta">5&nbsp;часов · сегодня</div>
+          <div class="bar-mini"><span style="height:64%"></span><span style="height:100%"></span><span style="height:28%"></span><span style="height:6%"></span><span style="height:6%"></span></div>
+        </div>
+      </article>
+      <article class="panel stat-cell">
+        <div class="label">Вчера · W-31 Вс</div>
+        <div class="v">820K<small>TOK</small></div>
+        <div class="row">
+          <div class="meta">полные сутки</div>
+          <div class="delta down">▼ 58%</div>
+        </div>
+      </article>
+      <article class="panel stat-cell" data-status="warm">
+        <div class="label">Пиковый час</div>
+        <div class="v">14:00<small>MSK</small></div>
+        <div class="row">
+          <div class="meta">555K токенов в&nbsp;час</div>
+          <div class="bar-mini warm"><span style="height:50%"></span><span style="height:100%"></span><span style="height:30%"></span></div>
+        </div>
+      </article>
+      <article class="panel stat-cell">
+        <div class="label">Среднее / активный час</div>
+        <div class="v">221K<small>TOK</small></div>
+        <div class="row">
+          <div class="meta">за 9 рабочих часов</div>
+          <div class="delta flat">— stable</div>
+        </div>
+      </article>
+      <article class="panel stat-cell" data-status="alert">
+        <div class="label">EOD-прогноз</div>
+        <div class="v">2.62M<small>TOK</small></div>
+        <div class="row">
+          <div class="meta">+ 1.4M к 23:59</div>
+          <div class="delta up">▲ active</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- ─── Heatmap calendar (28 days) ─────────────────────── -->
+    <section class="panel heatmap-panel">
+      <div class="heat-head">
+        <div>
+          <p class="eyebrow">Activity Map · 28&nbsp;days</p>
+          <h2 class="heat-title">Объём токенов по дням, Пн–Вс</h2>
+        </div>
+        <div class="heat-scale">
+          <span>меньше</span>
+          <span class="cells">
+            <span style="background: var(--hm-0); border: 1px solid var(--line)"></span>
+            <span style="background: var(--hm-1)"></span>
+            <span style="background: var(--hm-2)"></span>
+            <span style="background: var(--hm-3)"></span>
+            <span style="background: var(--hm-4)"></span>
+          </span>
+          <span>больше</span>
+        </div>
+      </div>
+      <div class="heatmap">
+        <div class="wk-label">W-29</div>
+        <div class="row">
+          <div class="cell l3" title="W-29 Пн: 8.4M"></div>
+          <div class="cell l4" title="W-29 Вт: 9.7M"></div>
+          <div class="cell l4" title="W-29 Ср: 10.6M"></div>
+          <div class="cell l3" title="W-29 Чт: 7.9M"></div>
+          <div class="cell l4" title="W-29 Пт: 10.7M"></div>
+          <div class="cell l4" title="W-29 Сб: 12.2M"></div>
+          <div class="cell l4" title="W-29 Вс: 16.1M"></div>
+        </div>
+        <div class="wk-label">W-30</div>
+        <div class="row">
+          <div class="cell l4" title="W-30 Пн: 14.9M"></div>
+          <div class="cell l4" title="W-30 Вт: 15.4M"></div>
+          <div class="cell l4" title="W-30 Ср: 16.0M"></div>
+          <div class="cell l2" title="W-30 Чт: 6.4M"></div>
+          <div class="cell l3" title="W-30 Пт: 12.8M"></div>
+          <div class="cell l2" title="W-30 Сб: 7.6M"></div>
+          <div class="cell l3" title="W-30 Вс: 13.9M"></div>
+        </div>
+        <div class="wk-label">W-31</div>
+        <div class="row">
+          <div class="cell l2" title="W-31 Пн: 4.9M"></div>
+          <div class="cell l1" title="W-31 Вт: 2.1M"></div>
+          <div class="cell l1" title="W-31 Ср: 3.5M"></div>
+          <div class="cell l2" title="W-31 Чт: 4.4M"></div>
+          <div class="cell l1" title="W-31 Пт: 2.8M"></div>
+          <div class="cell l2" title="W-31 Сб: 4.7M"></div>
+          <div class="cell l1" title="W-31 Вс: 0.8M"></div>
+        </div>
+        <div class="wk-label">W-32</div>
+        <div class="row">
+          <div class="cell l3 now" title="W-32 Пн (сегодня, частично): 1.98M · активный"></div>
+          <div class="cell empty" title="будущее"></div>
+          <div class="cell empty" title="будущее"></div>
+          <div class="cell empty" title="будущее"></div>
+          <div class="cell empty" title="будущее"></div>
+          <div class="cell empty" title="будущее"></div>
+          <div class="cell empty" title="будущее"></div>
+        </div>
+        <div></div>
+        <div class="day-labels">
+          <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Today 24h strip ───────────────────────────────── -->
+    <section class="panel today-panel">
+      <div class="today-head">
+        <div>
+          <p class="eyebrow">Today · 24h stream</p>
+          <h3 class="today-title">Почасовая разбивка, 2026-08-03</h3>
+        </div>
+        <div class="today-legend">
+          <span><span class="swatch" style="background: var(--accent)"></span>active</span>
+          <span><span class="swatch" style="background: var(--live)"></span>peak</span>
+          <span><span class="swatch" style="background: transparent; border: 1px dashed rgba(255,255,255,0.18)"></span>future</span>
+        </div>
+      </div>
+      <div class="today-strip">
+        <!-- 00:00..23:59; heights invented to match 1.98M cumulative by 15:59 -->
+        <div class="today-bar" style="--h: 6%"><span class="lbl">00</span></div>
+        <div class="today-bar" style="--h: 4%"><span class="lbl">01</span></div>
+        <div class="today-bar" style="--h: 3%"><span class="lbl">02</span></div>
+        <div class="today-bar" style="--h: 2%"><span class="lbl">03</span></div>
+        <div class="today-bar" style="--h: 2%"><span class="lbl">04</span></div>
+        <div class="today-bar" style="--h: 3%"><span class="lbl">05</span></div>
+        <div class="today-bar" style="--h: 5%"><span class="lbl">06</span></div>
+        <div class="today-bar" style="--h: 8%"><span class="lbl">07</span></div>
+        <div class="today-bar" style="--h: 14%"><span class="lbl">08</span></div>
+        <div class="today-bar" style="--h: 22%"><span class="lbl">09</span></div>
+        <div class="today-bar" style="--h: 28%"><span class="lbl">10</span></div>
+        <div class="today-bar" style="--h: 26%"><span class="lbl">11</span></div>
+        <div class="today-bar" style="--h: 18%"><span class="lbl">12</span></div>
+        <div class="today-bar" style="--h: 56%"><span class="lbl">13</span></div>
+        <div class="today-bar peak" style="--h: 88%"><span class="lbl">14</span></div>
+        <div class="today-bar" style="--h: 24%"><span class="lbl">15</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">16</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">17</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">18</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">19</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">20</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">21</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">22</span></div>
+        <div class="today-bar future" style="--h: 100%"><span class="lbl">23</span></div>
+        <div class="now-marker" style="left: calc((100% / 24) * 16 - 0.75px)"></div>
+      </div>
+    </section>
+
+    <div class="data-line">
+      <span>generated 2026-08-03 17:16 MSK · source: local_runtime_token_usage</span>
+      <span>165&nbsp;128&nbsp;096 tok · 28d window</span>
+    </div>
+  </main>
+</body>
+</html>
