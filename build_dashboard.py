@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -251,6 +252,7 @@ def fmt_int(n: int | None) -> str:
 # Текущая max-высота для шкалы weekly chart. Считаем от реальных значений,
 # округляя вверх до удобного тика.
 def _y_max_for(weeks: list[Week]) -> int:
+    """Linear: max шкалы, округлённый вверх до удобного тика."""
     values = [d for w in weeks for d in w.days if d is not None]
     if not values:
         return 1000
@@ -260,6 +262,32 @@ def _y_max_for(weeks: list[Week]) -> int:
         return 200_000
     step = 200_000 if raw <= 2_000_000 else 1_000_000
     return ((raw + step - 1) // step) * step
+
+
+def _y_ticks_for_log(weeks: list[Week]) -> tuple[float, float, list[int]] | None:
+    """Log: (y_min, y_max, tick_values) или None если нет positive-значений.
+
+    Снэпим к степеням 10. Сверху даём минимум 1 decade headroom, чтобы
+    самый большой бар не упирался в потолок шкалы.
+
+    Защита: если 0-day попадёт (data с 0-токенами, но не None) — он
+    отрендерится как 2px floor bar в render-функции, см. _bar_geometry.
+    """
+    values = [v for w in weeks for v in w.days if v is not None and v > 0]
+    if not values:
+        return None
+    raw_min = min(values)
+    raw_max = max(values)
+    exp_min = int(math.floor(math.log10(raw_min)))
+    exp_max_raw = int(math.floor(math.log10(raw_max)))
+    # +1 decade headroom, чтобы max-бар не лип к потолку
+    exp_max = exp_max_raw + 1
+    if exp_max <= exp_min:
+        exp_max = exp_min + 1
+    y_min = 10 ** exp_min
+    y_max = 10 ** exp_max
+    ticks = [10 ** e for e in range(exp_min, exp_max + 1)]
+    return (float(y_min), float(y_max), ticks)
 
 
 def render_html(
@@ -284,6 +312,7 @@ def render_html(
             f"Сумма за {len(window_entries)} часов (UTC+3), сегодня"
         )
     y_max = _y_max_for(weeks)
+    log_info = _y_ticks_for_log(weeks)
 
     # Серия для JS-варианта (line / hybrid) — оставлено в HTML для совместимости
     # с prototype, но дефолтный рендер — bars. PRD §7.3.
@@ -306,8 +335,16 @@ def render_html(
 
     # Мини-бары по часам активного слота (SVG).
     window_bars_svg = _render_window_bars(window_entries, window_max)
-    # Weekly grouped bars (дефолтный вариант PRD).
-    weekly_bars_svg = _render_weekly_bars(weeks, y_max)
+    # Weekly grouped bars — оба варианта (linear / log), видимость через CSS.
+    # Дефолт — linear; log включается кликом, состояние в ?scale=log.
+    linear_bars_svg = _render_weekly_bars(weeks, "linear", y_max)
+    log_bars_svg = _render_weekly_bars(weeks, "log", log_info) if log_info else ""
+
+    # Meta-текст для log-варианта. None → "log, нет данных".
+    if log_info:
+        log_meta_range = f"log, {fmt_tokens(int(log_info[0]))} … {fmt_tokens(int(log_info[1]))}"
+    else:
+        log_meta_range = "log, нет данных"
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -410,10 +447,51 @@ def render_html(
     }}
     .chart-title {{ margin: 0; font-size: 28px; line-height: 1.05; }}
     .chart-meta {{
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
       color: var(--muted);
       font-size: 14px;
       line-height: 1.4;
     }}
+    .chart-meta__variant {{ display: inline; }}
+    /* scale-toggle: сегментированный контрол в духе eyebrow-стиля дашборда */
+    .scale-toggle {{
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+      padding: 2px;
+      border: 1px solid rgba(111, 106, 96, 0.22);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.55);
+    }}
+    .scale-toggle__btn {{
+      border: 0;
+      background: transparent;
+      padding: 4px 12px;
+      font: 600 11px/1 "Trebuchet MS", sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }}
+    .scale-toggle__btn:hover:not(.is-active) {{ color: var(--ink); }}
+    .scale-toggle__btn.is-active {{
+      background: var(--ink);
+      color: #fbf7ef;
+    }}
+    /* Видимость вариантов чарта и meta-текста по data-scale на .chart-panel
+       (общий предок .chart-meta и #chart). Атрибут data-scale переезжает
+       именно на эту секцию, потому что .chart-meta и #chart — сиблинги,
+       а не parent/child. */
+    .chart-panel[data-scale="linear"] .chart-variant--log {{ display: none; }}
+    .chart-panel[data-scale="log"]    .chart-variant--linear {{ display: none; }}
+    .chart-panel[data-scale="linear"] .chart-meta__log {{ display: none; }}
+    .chart-panel[data-scale="log"]    .chart-meta__linear {{ display: none; }}
     .legend {{
       display: flex;
       flex-wrap: wrap;
@@ -492,15 +570,27 @@ def render_html(
       </section>
     </section>
 
-    <section class="panel chart-panel">
+    <section class="panel chart-panel" id="chart-scale" data-scale="linear">
       <div class="chart-head">
         <div>
           <p class="eyebrow">Weekly compare</p>
           <h2 class="chart-title">Последние 4 недели, Пн–Вс</h2>
         </div>
         <div class="chart-meta">
-          Шкала: 0 … {fmt_int(y_max)} токенов ·
-          Текущая неделя: <strong>{week_labels[-1]}</strong>
+          <span class="chart-meta__variant chart-meta__linear">
+            Шкала: 0 … {fmt_int(y_max)} токенов ·
+            Текущая неделя: <strong>{week_labels[-1]}</strong>
+          </span>
+          <span class="chart-meta__variant chart-meta__log">
+            Шкала: {log_meta_range} токенов ·
+            Текущая неделя: <strong>{week_labels[-1]}</strong>
+          </span>
+          <div class="scale-toggle" role="tablist" aria-label="Шкала weekly chart">
+            <button type="button" class="scale-toggle__btn is-active"
+                    data-scale="linear" role="tab" aria-selected="true">Линейная</button>
+            <button type="button" class="scale-toggle__btn"
+                    data-scale="log" role="tab" aria-selected="false">Log</button>
+          </div>
         </div>
       </div>
       <ul class="legend">
@@ -511,10 +601,18 @@ def render_html(
         )}
       </ul>
       <div id="chart" aria-live="polite">
-        <svg viewBox="0 0 1040 280" width="100%" height="100%" role="img"
-             aria-label="Grouped bars weekly token comparison">
-          {weekly_bars_svg}
-        </svg>
+        <div class="chart-variant chart-variant--linear">
+          <svg viewBox="0 0 1040 280" width="100%" height="100%" role="img"
+               aria-label="Grouped bars weekly token comparison (linear scale)">
+            {linear_bars_svg}
+          </svg>
+        </div>
+        <div class="chart-variant chart-variant--log">
+          <svg viewBox="0 0 1040 280" width="100%" height="100%" role="img"
+               aria-label="Grouped bars weekly token comparison (log scale)">
+            {log_bars_svg}
+          </svg>
+        </div>
       </div>
       <div class="footer">
         Сгенерировано: {today_label} ·
@@ -523,6 +621,56 @@ def render_html(
       </div>
     </section>
   </main>
+  <script>
+    // Linear/log toggle для weekly chart.
+    // Приоритет источников состояния (от сильного к слабому):
+    //   1. ?scale=log|linear в URL — для шаринга ссылок.
+    //   2. localStorage[tokenDashboardScale] — переживает <meta http-equiv="refresh">
+    //      каждые 60s и ребилд dashboard.html каждые 5 мин (когда URL квери
+    //      стрипается в некоторых браузерах).
+    //   3. 'linear' по умолчанию — новые посетители видят честную абсолютную шкалу.
+    // localStorage пишется при каждом клике, поэтому и URL, и storage всегда
+    // консистентны с последним выбором пользователя.
+    (function () {{
+      var STORAGE_KEY = 'tokenDashboardScale';
+      var root = document.getElementById('chart-scale');
+      if (!root) return;
+      function readStored() {{
+        try {{ return localStorage.getItem(STORAGE_KEY); }}
+        catch (e) {{ return null; }}  // private mode / file:// restrictions
+      }}
+      function writeStored(scale) {{
+        try {{ localStorage.setItem(STORAGE_KEY, scale); }}
+        catch (e) {{ /* silent — URL всё ещё работает */ }}
+      }}
+      function normalize(s) {{ return (s === 'log' || s === 'linear') ? s : null; }}
+
+      var urlScale = normalize(new URLSearchParams(window.location.search).get('scale'));
+      var storedScale = normalize(readStored());
+      var initial = urlScale || storedScale || 'linear';
+      if (urlScale) writeStored(urlScale);  // шаринг-ссылка прописывается в storage
+
+      apply(initial, false);
+      root.querySelectorAll('.scale-toggle__btn').forEach(function (btn) {{
+        btn.addEventListener('click', function () {{ apply(btn.dataset.scale, true); }});
+      }});
+      function apply(scale, persist) {{
+        root.dataset.scale = scale;
+        root.querySelectorAll('.scale-toggle__btn').forEach(function (b) {{
+          var active = b.dataset.scale === scale;
+          b.classList.toggle('is-active', active);
+          b.setAttribute('aria-selected', active ? 'true' : 'false');
+        }});
+        if (persist) {{
+          var url = new URL(window.location);
+          if (scale === 'linear') url.searchParams.delete('scale');
+          else url.searchParams.set('scale', scale);
+          history.replaceState(null, '', url);
+          writeStored(scale);
+        }}
+      }}
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -561,8 +709,19 @@ def _render_window_bars(
     return "".join(bars)
 
 
-def _render_weekly_bars(weeks: list[Week], max_value: int) -> str:
-    """Grouped bars: 4 группы по 7 дней, future/no-data → dashed placeholder."""
+def _render_weekly_bars(
+    weeks: list[Week],
+    scale: str,
+    y_info,
+) -> str:
+    """Grouped bars: 4 группы по 7 дней, future/no-data → dashed placeholder.
+
+    scale: 'linear' | 'log'.
+    y_info:
+        - linear: int (y_max), тики фиксированные [0, 25%, 50%, 75%, 100%].
+        - log:    (y_min: float, y_max: float, ticks: list[int]) — степени 10.
+                  0-value день → 2px floor bar (без log(0)).
+    """
     width, height = 1040, 280
     margin = {"top": 18, "right": 20, "bottom": 60, "left": 92}
     inner_w = width - margin["left"] - margin["right"]
@@ -572,18 +731,48 @@ def _render_weekly_bars(weeks: list[Week], max_value: int) -> str:
     bar_w = day_slot - 3
     day_area_w = day_slot * 7
 
-    # Шкала: 5 тиков 0, 25%, 50%, 75%, 100% от max.
-    y_ticks = [0, max_value // 4, max_value // 2, 3 * max_value // 4, max_value]
+    if scale == "log":
+        y_min, y_max, y_ticks = y_info
+        log_min = math.log10(y_min)
+        log_max = math.log10(y_max)
+        log_span = log_max - log_min
+
+        def _to_y(value: int) -> float:
+            """Y-координата верха бара (в px). 0 → пол (не log(0))."""
+            if value <= 0:
+                return margin["top"] + inner_h
+            frac = (math.log10(value) - log_min) / log_span
+            return margin["top"] + inner_h - frac * inner_h
+
+        def _to_h(value: int) -> float:
+            """Высота бара (px). 0 → 2px floor bar."""
+            if value <= 0:
+                return 2.0
+            frac = (math.log10(value) - log_min) / log_span
+            return frac * inner_h
+    else:
+        y_max = y_info
+        y_ticks = [0, y_max // 4, y_max // 2, 3 * y_max // 4, y_max]
+
+        def _to_y(value: int) -> float:
+            return margin["top"] + inner_h - (value / y_max) * inner_h
+
+        def _to_h(value: int) -> float:
+            return (value / y_max) * inner_h
+
+    # Grid lines + tick labels.
     grid_parts = []
     for tick in y_ticks:
-        y = margin["top"] + inner_h - (tick / max_value) * inner_h
+        y = _to_y(tick)
         grid_parts.append(
             f'<line x1="{margin["left"]}" y1="{y:.1f}" x2="{width - margin["right"]}" y2="{y:.1f}" '
             f'stroke="rgba(111,106,96,0.14)" />'
         )
+        # Linear — fmt_int (26 000 000). Log — компактный "100K" / "10M".
+        label = fmt_int(tick) if scale == "linear" else fmt_tokens(tick)
         grid_parts.append(
             f'<text x="{margin["left"] - 12}" y="{y + 4:.1f}" text-anchor="end" '
-            f'font-size="11" fill="#6f6a60">{fmt_int(tick)}</text>'
+            f'font-size="11" fill="#6f6a60">{label}</text>'
         )
     grid = "".join(grid_parts)
 
@@ -606,21 +795,30 @@ def _render_weekly_bars(weeks: list[Week], max_value: int) -> str:
                     f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: нет данных</title>'
                     f'</rect>'
                 )
-                # день-лейбл всё равно под ним
                 bar_parts.append(
                     f'<text x="{x + bar_w/2:.1f}" y="{height - 38}" text-anchor="middle" '
                     f'font-size="10.5" fill="#6f6a60">{WEEKDAY_LABELS[d_idx]}</text>'
                 )
                 continue
-            h_px = (value / max_value) * inner_h
-            y = margin["top"] + inner_h - h_px
-            fill_class = palette["bright_tw"] if is_weekend else palette["solid_tw"]
-            bar_parts.append(
-                f'<rect class="{fill_class}" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
-                f'height="{h_px:.1f}" rx="7" opacity="{"1" if week.is_current else "0.88"}">'
-                f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: {fmt_int(value)}</title>'
-                f'</rect>'
-            )
+            h_px = _to_h(value)
+            y = _to_y(value)
+            if value == 0 and scale == "log":
+                # Floor bar: день есть, но 0 токенов. Тонкий, в disabled-цвете.
+                bar_parts.append(
+                    f'<rect x="{x:.1f}" y="{y - h_px:.1f}" width="{bar_w:.1f}" '
+                    f'height="{h_px:.1f}" rx="2" '
+                    f'fill="rgba(216,208,195,0.7)">'
+                    f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: 0 (log floor)</title>'
+                    f'</rect>'
+                )
+            else:
+                fill_class = palette["bright_tw"] if is_weekend else palette["solid_tw"]
+                bar_parts.append(
+                    f'<rect class="{fill_class}" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
+                    f'height="{h_px:.1f}" rx="7" opacity="{"1" if week.is_current else "0.88"}">'
+                    f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: {fmt_int(value)}</title>'
+                    f'</rect>'
+                )
             bar_parts.append(
                 f'<text x="{x + bar_w/2:.1f}" y="{height - 38}" text-anchor="middle" '
                 f'font-size="10.5" fill="#6f6a60">{WEEKDAY_LABELS[d_idx]}</text>'
