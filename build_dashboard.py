@@ -49,6 +49,13 @@ NIGHT_SLOT = WINDOWS[4]
 WEEK_COUNT: int = 4                                # PRD §6.4
 WEEKDAY_LABELS: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
+# Недельная квота (cap) на input+output токены. На текущий день weekly chart
+# выводится красная пунктирная полоска с подписью — это «потолок» сегодняшнего
+# расхода, ниже которого нужно остаться, чтобы уложиться в капу за 7 дней
+# (включая сегодня). Если сегодня превысил — порог автоматически пересчитается
+# на завтра (формула зависит от today_spent и days_left, оба обновляются).
+WEEKLY_CAP_TOKENS: int = 75_000_000
+
 # Палитра по индексу недели (0 = самая старая, WEEK_COUNT-1 = текущая).
 # Дублирует дизайн-токены из dashboard-chart-prototype.html.
 WEEK_PALETTE: list[dict[str, str]] = [
@@ -238,6 +245,44 @@ def compute_weekly(
             days.append(sum(hourly.get((day_date, h), 0) for h in range(24)))
         weeks.append(Week(label=label, monday=monday, days=days, is_current=is_current))
     return weeks
+
+
+def compute_weekly_threshold(
+    weekly_cap: int, today_spent: int, days_left: int
+) -> int | None:
+    """«Потолок» расхода на сегодня (накопительно), чтобы уложиться в weekly_cap.
+
+    Формула:  threshold = max(0, (cap − today_spent) / days_left)  (с floor).
+
+    Семантика:
+      - threshold — это максимум, который можно потратить СЕГОДНЯ (с начала суток
+        до конца дня), чтобы при равномерном расходе на оставшиеся дни общая
+        сумма за неделю не превысила `weekly_cap`.
+      - Если сегодня уже потратил больше, чем threshold, — завтра формула
+        пересчитается (today_spent станет больше, days_left меньше → новый
+        порог). Это и есть «если превысил — на следующий день уровень
+        пересчитается».
+      - days_left включает сегодня:  Пн=7, Вт=6, …, Вс=1. Считается как
+        `8 − isoweekday(today)`.
+
+    Возвращает:
+      - int ≥ 0 — сам threshold (clamped в 0 снизу для консервативности).
+      - None   — если `days_left <= 0` (нечего считать; защита от деления на 0).
+                 На UI такие случаи маловероятны (текущий день всегда ≥ 1),
+                 но контракт это явно фиксирует.
+
+    Параметры намеренно плоские (без `now_msk`/SQLite) — функция чистая,
+    тестируется без моков. Вызов из main() подставляет реальные числа.
+    """
+    if days_left <= 0:
+        return None
+    remaining = weekly_cap - today_spent
+    if remaining <= 0:
+        # Вся капа уже исчерпана (или превышена) — сегодня больше тратить не надо.
+        return 0
+    # floor вниз: лучше показать чуть заниженный порог, чем подтолкнуть к
+    # превышению. 10.71M → 10M, не 11M.
+    return remaining // days_left
 
 
 def compute_sparkline_current(
@@ -466,7 +511,7 @@ def _axis_labels_log(log_info) -> str:
 
 
 def _render_weekly_grid(
-    weeks: list[Week], scale: str, y_info
+    weeks: list[Week], scale: str, y_info, weekly_threshold: int | None = None
 ) -> str:
     """HTML-грид 4 недели × 7 дней. Недели — колонки, дни — бары.
 
@@ -474,6 +519,16 @@ def _render_weekly_grid(
       .bar.history — прошедшие/текущие данные (полупрозрачный белый)
       .bar.accent  — текущий день текущей недели (фиолетовый градиент)
       .bar.future  — будущие дни или None-данные (пунктир, opacity 0.7)
+
+    Доп. элементы:
+      .bar-cell      — обёртка вокруг бара (даёт position:relative для threshold)
+      .threshold     — горизонтальная пунктирная линия «потолка» сегодняшнего дня
+      .threshold-label — подпись справа от линии (например «порог 10.37M»)
+
+    Threshold рисуется ТОЛЬКО над текущим днём текущей недели (W-N, сегодня).
+    Если `weekly_threshold is None` (cap превышен или days_left=0) — линия
+    не рисуется. Если today_spent > threshold, бар визуально выше линии —
+    это и есть сигнал «превысил, на завтра уровень пересчитается».
 
     Высота — % от 260px контейнера (через _bar_height_pct).
     В шапке карточки — W-лэйбл слева + суммарный объём за неделю в M справа.
@@ -501,9 +556,29 @@ def _render_weekly_grid(
                 height_pct = _bar_height_pct(value, scale, y_info)
                 title_extra = fmt_int(value)
             title = f"{week.label}, {WEEKDAY_LABELS[d_idx]}: {title_extra}"
-            bars.append(
+            cell_inner = (
                 f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
             )
+
+            # Threshold рисуем ТОЛЬКО для текущего дня текущей недели, и только
+            # если он вычислился. Линия прибита к правому краю бара (через
+            # inset:0 в CSS) и выровнена по высоте threshold-значения.
+            if (
+                weekly_threshold is not None
+                and week.is_current
+                and day_d == today_d
+            ):
+                thr_pct = _bar_height_pct(weekly_threshold, scale, y_info)
+                thr_label = f"{fmt_tokens(weekly_threshold)}"
+                cell_inner += (
+                    f'<div class="threshold" style="bottom:{thr_pct:.1f}%" '
+                    f'title="Потолок сегодня: {fmt_int(weekly_threshold)} токенов '
+                    f'(weekly cap {fmt_int(WEEKLY_CAP_TOKENS)})">'
+                    f'<span class="threshold-label">{thr_label}</span>'
+                    f'</div>'
+                )
+
+            bars.append(f'<div class="bar-cell">{cell_inner}</div>')
         # Сумма за неделю — только по дням с данными (None — no data, не 0).
         week_total = sum(v for v in week.days if v is not None)
         week_total_str = f"{week_total / 1_000_000:.2f}M"
@@ -538,6 +613,7 @@ def render_html(
     weeks: list[Week],
     y_max: int,
     log_info: tuple[float, float, list[int]] | None,
+    weekly_threshold: int | None,
 ) -> str:
     now_msk = datetime.now(MSK)
     today_label = now_msk.strftime("%Y-%m-%d %H:%M MSK")
@@ -570,8 +646,10 @@ def render_html(
     delta3 = _delta_html(window_delta)
 
     # Weekly chart — оба варианта (linear/log), видимость через data-scale на .chart-panel
-    linear_grid = _render_weekly_grid(weeks, "linear", y_max)
-    log_grid = _render_weekly_grid(weeks, "log", log_info) if log_info else ""
+    linear_grid = _render_weekly_grid(weeks, "linear", y_max, weekly_threshold)
+    log_grid = (
+        _render_weekly_grid(weeks, "log", log_info, weekly_threshold) if log_info else ""
+    )
     axis_linear = _axis_labels_linear(y_max)
     axis_log = _axis_labels_log(log_info)
 
@@ -748,9 +826,18 @@ def render_html(
       text-transform: none; letter-spacing: -0.01em;
     }}
     .week.current .week-total {{ color: var(--accent); }}
-    .bars {{ display: flex; align-items: end; gap: 7px; height: 260px; }}
+    .bars {{ display: flex; gap: 7px; height: 260px; }}
+    .bar-cell {{
+      /* Обёртка вокруг одного бара. Даёт position:relative для абсолютного
+         позиционирования threshold-линии; сам .bar теперь flex-child .bar-cell,
+         а не .bars — иначе threshold не привязать к ширине одного дня.
+         .bars использует align-items по умолчанию (stretch) — это растягивает
+         .bar-cell на всю высоту 260px, без чего height:N% на .bar уехал бы в 0. */
+      position: relative; flex: 1; min-width: 0; min-height: 6px;
+      display: flex; align-items: end;
+    }}
     .bar {{
-      flex: 1; border-radius: 10px 10px 0 0; min-height: 6px;
+      width: 100%; border-radius: 10px 10px 0 0; min-height: 6px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
     }}
     .bar.history {{ background: var(--history); }}
@@ -759,6 +846,22 @@ def render_html(
       background: rgba(255,255,255,0.03);
       border: 1px dashed rgba(255,255,255,0.12);
       opacity: 0.7; box-shadow: none;
+    }}
+    /* Threshold — горизонтальная пунктирная линия поверх текущего дня. Линия
+       не «дёргает» лейаут: position:absolute + bottom:X% (X считается в
+       _render_weekly_grid той же функцией, что высота бара). z-index 2 — чтобы
+       быть над баром. На узких экранах подпись прячется, линия остаётся. */
+    .threshold {{
+      position: absolute; left: -3px; right: -3px;
+      border-top: 2px dashed #fca5a5;
+      pointer-events: none; z-index: 2;
+    }}
+    .threshold-label {{
+      position: absolute; left: 100%; top: -10px;
+      margin-left: 6px; white-space: nowrap;
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 10px; font-weight: 700;
+      color: #fca5a5; text-transform: none; letter-spacing: 0;
     }}
     .days {{
       display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px;
@@ -770,6 +873,8 @@ def render_html(
       .chart-head, .hero-top {{ flex-direction: column; align-items: flex-start; }}
       .plot {{ grid-template-columns: 1fr; }}
       .axis {{ display: none; }}
+      /* На узком лейауте подпись threshold'а прячем, линия остаётся. */
+      .threshold-label {{ display: none; }}
     }}
   </style>
 </head>
@@ -852,6 +957,7 @@ def render_html(
       <div class="legend">
         <span><i class="dot" style="background:rgba(255,255,255,0.16)"></i>W прошлые · history</span>
         <span><i class="dot" style="background:var(--accent)"></i>{current_week_label} · current</span>
+        <span><i class="dot" style="background:transparent;border-top:2px dashed #ef4444;height:0;width:14px;border-radius:0;vertical-align:middle"></i>порог недели ({fmt_int(WEEKLY_CAP_TOKENS)} токенов)</span>
       </div>
       <div class="chart-shell">
         <div class="plot chart-variant chart-variant--linear">
@@ -965,6 +1071,24 @@ def main() -> int:
     y_max = _y_max_for(weeks)
     log_info = _y_ticks_for_log(weeks)
 
+    # Порог расхода на сегодня (weekly cap threshold). Считаем только если
+    # текущая неделя действительно последняя в окне (она всегда последняя по
+    # логике compute_weekly) и для today есть ненулевая запись. Если записи
+    # ещё нет — today_spent=0, threshold=cap/days_left (нормальный кейс для
+    # самого начала дня).
+    current_week = weeks[-1]
+    today_idx = now_msk.weekday()  # 0=Пн..6=Вс
+    today_spent = current_week.days[today_idx] or 0
+    days_left = 8 - now_msk.isoweekday()  # Пн=7, Вс=1
+    weekly_threshold = compute_weekly_threshold(
+        WEEKLY_CAP_TOKENS, today_spent, days_left
+    )
+    log(
+        f"[build] weekly_cap={WEEKLY_CAP_TOKENS}  "
+        f"today_spent={today_spent}  days_left={days_left}  "
+        f"threshold={weekly_threshold}"
+    )
+
     log(f"[build] current_hour ({today}, {now_msk.hour:02d}h) = {current_hour_tokens}")
     log(f"[build] today       (00:00–{now_msk.hour:02d}:59) = {today_tokens}")
     log(f"[build] active_window = {window_label}, total = {window_total}")
@@ -991,6 +1115,7 @@ def main() -> int:
         weeks=weeks,
         y_max=y_max,
         log_info=log_info,
+        weekly_threshold=weekly_threshold,
     )
 
     if args.no_write:

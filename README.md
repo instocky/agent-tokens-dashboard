@@ -17,6 +17,11 @@ Task Scheduler trigger.
   with per-hour breakdown
 - Shows a 4-week grouped-bar comparison (Mon–Sun per week, oldest → current)
 - Marks future days and days with no logged rows as `disabled` (dashed), not as zero
+- Shows a **weekly cap threshold** on the current day: a red dashed line with
+  a "порог N.NNM" label marking today's spend ceiling, so the weekly cap
+  (default 75M tokens) holds across the remaining days of the week. If you
+  blow past the line, the level auto-recalculates for the next day (formula
+  re-evaluates with new `today_spent` / `days_left`).
 
 **Metric:** `input_tokens + output_tokens`. `cache_read_tokens`,
 `cache_write_tokens`, `reasoning_tokens`, and `cost_usd` are intentionally
@@ -92,8 +97,8 @@ first; the script assumes milliseconds.
 | `--no-write`  | `false`                              | Print to stdout instead of write |
 | `--quiet`     | `false`                              | Suppress build log               |
 
-Constants (timezone offset, slot table, week count, palette) live at the
-top of `build_dashboard.py` as module-level constants.
+Constants (timezone offset, slot table, week count, palette, **weekly cap**)
+live at the top of `build_dashboard.py` as module-level constants.
 
 ---
 
