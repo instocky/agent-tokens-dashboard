@@ -449,7 +449,7 @@ def render_html(
       gap: 16px;
       align-items: center;
     }}
-    .stat-window .window-bars {{ width: 100%; height: 56px; }}
+    .stat-window .window-bars {{ width: 100%; height: 66px; }}
     .chart-panel {{ padding: 24px; }}
     .chart-head {{
       display: flex;
@@ -583,7 +583,7 @@ def render_html(
             <div class="stat-value">{fmt_tokens(window_total)}</div>
             <div class="stat-note">{window_note}</div>
           </div>
-          <svg class="window-bars" viewBox="0 0 240 56" preserveAspectRatio="none" aria-label="Current window breakdown">
+          <svg class="window-bars" viewBox="0 0 240 66" preserveAspectRatio="none" aria-label="Current window breakdown">
             {window_bars_svg}
           </svg>
         </article>
@@ -699,31 +699,40 @@ def render_html(
 def _render_window_bars(
     entries: list[tuple[int, int, date]], max_value: int
 ) -> str:
-    """Мини-бары по часам активного слота в одну строку.
+    """Мини-бары по часам активного слота + лейблы часов под столбцами.
 
     entries: [(hour, value, date), ...] — порядок как в окне (для ночного
     23 идёт первым, потом 0/1/2; для дневного — по возрастанию).
     Кол-во баров адаптивно: 5 для дневных слотов, 4 для ночного.
+
+    Layout viewBox (240x66):
+      - y 0..52:   bar zone  (бары растут снизу вверх от y=52)
+      - y 52..66:  label zone (час-цифра baseline y=62, font-size 9)
+    Раньше лейблы сидели на y=55 в 56px viewBox и рисовались ВНУТРИ/ПОВЕРХ
+    столбцов — на рендере их не было видно. Теперь — отдельная зона под барами.
     """
     if max_value <= 0:
         max_value = 1
-    width, height = 240, 56
+    width, bar_h, label_h = 240, 52, 14
+    total_h = bar_h + label_h  # 66
     margin_l, margin_r, gap = 8, 8, 6
     n = len(entries)
     bar_w = (width - margin_l - margin_r - gap * (n - 1)) / n
     bars = []
     for i, (h, v, d) in enumerate(entries):
         x = margin_l + i * (bar_w + gap)
-        h_px = max(2.0, (v / max_value) * (height - 14))
-        y = height - h_px
+        # 4px top padding для максимального бара — было 14 в старом layout.
+        h_px = max(2.0, (v / max_value) * (bar_h - 4))
+        y = bar_h - h_px
         bars.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h_px:.1f}" rx="3" '
             f'fill="#257179">'
             f'<title>{d.isoformat()} {h:02d}:00–{h:02d}:59: {fmt_int(v)}</title>'
             f'</rect>'
         )
+        # Baseline y = bar_h + 10: 2px gap от бара + 8px top-padding внутри label_h.
         bars.append(
-            f'<text x="{x + bar_w/2:.1f}" y="{height - 1}" text-anchor="middle" '
+            f'<text x="{x + bar_w/2:.1f}" y="{bar_h + 10}" text-anchor="middle" '
             f'font-size="9" fill="#6f6a60">{h:02d}</text>'
         )
     return "".join(bars)
