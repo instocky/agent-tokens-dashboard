@@ -355,6 +355,22 @@ def fmt_tokens(n: int | None) -> str:
     return f"{n / 1_000_000:.2f}M"
 
 
+def fmt_log_tick(n: int) -> str:
+    """Log-axis tick label: '1M' / '10M' / '100M' / '100K' (без .0 / .00).
+
+    На log-оси визуальное положение тика уже передаёт порядок, так что
+    trailing decimals избыточны (и на стыке порядков могут выглядеть как
+    дробные значения). Применяется ТОЛЬКО к подписям осей, не к KPI
+    (где .1K / .2M — нужная precision).
+    """
+    s = fmt_tokens(n)
+    if s.endswith("K") or s.endswith("M"):
+        num, suffix = s[:-1], s[-1]
+        # "100.0" → "100" → "100K";  "1.00" → "1" → "1M";  "5.50" → "5.5" → "5.5M"
+        return num.rstrip("0").rstrip(".") + suffix
+    return s
+
+
 def fmt_int(n: int | None) -> str:
     """Без K/M, для осей и лейблов."""
     return "—" if n is None else f"{n:,}".replace(",", " ")
@@ -471,17 +487,17 @@ def _render_sparkline(points: list[int], color: str) -> str:
 
 
 def _axis_labels_linear(y_max: int) -> str:
-    """4 тика сверху вниз: y_max, 2/3, 1/3, 0."""
+    """4 тика сверху вниз: y_max, 2/3, 1/3, 0 — компактный M-формат (2 знака)."""
     labels = [y_max, y_max * 2 // 3, y_max // 3, 0]
-    return "".join(f"<span>{fmt_int(v)}</span>" for v in labels)
+    return "".join(f"<span>{fmt_tokens(v)}</span>" for v in labels)
 
 
 def _axis_labels_log(log_info) -> str:
-    """4 тика сверху вниз: ticks[-1]..ticks[0]. Если None — пусто."""
+    """4 тика сверху вниз: ticks[-1]..ticks[0]. Без trailing zeros."""
     if not log_info:
         return ""
     _, _, ticks = log_info
-    return "".join(f"<span>{fmt_tokens(int(t))}</span>" for t in reversed(ticks))
+    return "".join(f"<span>{fmt_log_tick(int(t))}</span>" for t in reversed(ticks))
 
 
 def _render_weekly_grid(
@@ -707,7 +723,7 @@ def render_html(
     .kpi-head {{ display: flex; justify-content: space-between; align-items: start; gap: 10px; }}
     .kpi-title {{
       color: rgba(216, 223, 236, 0.54);
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
     }}
     .kpi-time {{ margin-top: 6px; color: #96a0b5; font-size: 13px; line-height: 1.35; }}
     .delta {{
