@@ -784,29 +784,40 @@ def render_html(
       border: 1px solid rgba(255,255,255,0.04);
     }}
     .plot {{ display: grid; grid-template-columns: 94px 1fr; gap: 18px; }}
-    /* Горизонтальная сетка — 2 линии на 33.33% и 66.67% высоты .weeks.
-       Делит чарт на 3 равных вертикальных отрезка, как и лейблы оси
-       (0/33/67/100% через space-between на .axis). Шаг 68px из v1 не
-       совпадал с этими позициями из-за padding-top:.weeks(18px) +
-       .week-head(~16px), и линии "плавали" между лейблами. Теперь
-       привязаны к тем же y-позициям, что и средние лейблы (10M/1M
-       в логе, 17.33M/8.67M в линейной). Рисуется ТОЛЬКО в .weeks —
-       на .axis рядом с лейблами линии смотрелись шумом. Цвет/alpha
-       (0.12) — слабые, чтобы не конкурировать с барами и threshold. */
+    /* Шкала лога: 0M — ВЕРХ .days (внутри .week, над Пн-Вс), 100M — самый верх.
+       Расстояние «100M → 0M» — это bar area: 12px padding-top + ~28px .week-head
+       (12px font + 12px margin-bottom) + 260px .bars + 10px .days margin-top ≈ 310px.
+       На полной высоте .week (~348px) это 0M ≈ 89.08%.
+       От 0M вверх: 1M на 1/3 (= 59.39% от верха .week), 10M на 2/3 (= 29.69%).
+       Красные линии НЕ рисуем — 0M/100M существуют только как ментальные якоря.
+       .axis лейблы на тех же Y, что и серые линии сетки в .weeks (translateY(-50%)),
+       чтобы линия проходила ТОЧНО через центр строки подписи. */
     .axis {{
-      display: flex; flex-direction: column; justify-content: space-between; align-items: end;
-      padding: 18px 10px 26px 0; color: #8e97a8; font-size: 13px;
+      position: relative; color: #8e97a8; font-size: 13px;
     }}
+    .axis span {{
+      position: absolute; right: 10px; line-height: 1;
+    }}
+    /* :nth-child по порядку рендера: 1=100M, 2=10M, 3=1M, 4=100K.
+       100K сидит ровно на 0M (верх .days) — на логе 0M ≡ 100K ≡ 10^5, поэтому
+       это одна точка, а не «снаружи шкалы». 4-й лейбл сцентрирован по той же
+       translateY(-50%) схеме, что 10M/1M, чтобы визуально лечь на 0M. */
+    .axis span:nth-child(1) {{ top: 0; }}
+    .axis span:nth-child(2) {{ top: 29.7%; transform: translateY(-50%); }}
+    .axis span:nth-child(3) {{ top: 59.4%; transform: translateY(-50%); }}
+    .axis span:nth-child(4) {{ top: 89.08%; transform: translateY(-50%); }}
+    /* .weeks — без padding-top, без красных линий. Только серые линии сетки на
+       29.7% / 59.4% (на тех же Y, что центры 10M/1M). grid-stretch в .plot
+       даёт .axis ту же высоту, что и .weeks. */
     .weeks {{
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
-      padding-top: 18px;
       background: linear-gradient(
         180deg,
-        transparent 0 calc(33.333% - 0.5px),
-        var(--grid) calc(33.333% - 0.5px) calc(33.333% + 0.5px),
-        transparent calc(33.333% + 0.5px) calc(66.667% - 0.5px),
-        var(--grid) calc(66.667% - 0.5px) calc(66.667% + 0.5px),
-        transparent calc(66.667% + 0.5px) 100%
+        transparent 0 calc(29.7% - 0.5px),
+        var(--grid) calc(29.7% - 0.5px) calc(29.7% + 0.5px),
+        transparent calc(29.7% + 0.5px) calc(59.4% - 0.5px),
+        var(--grid) calc(59.4% - 0.5px) calc(59.4% + 0.5px),
+        transparent calc(59.4% + 0.5px) 100%
       );
     }}
     .week {{
