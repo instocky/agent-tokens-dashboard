@@ -784,15 +784,30 @@ def render_html(
       border: 1px solid rgba(255,255,255,0.04);
     }}
     .plot {{ display: grid; grid-template-columns: 94px 1fr; gap: 18px; }}
+    /* Горизонтальная сетка — 2 линии на 33.33% и 66.67% высоты .weeks.
+       Делит чарт на 3 равных вертикальных отрезка, как и лейблы оси
+       (0/33/67/100% через space-between на .axis). Шаг 68px из v1 не
+       совпадал с этими позициями из-за padding-top:.weeks(18px) +
+       .week-head(~16px), и линии "плавали" между лейблами. Теперь
+       привязаны к тем же y-позициям, что и средние лейблы (10M/1M
+       в логе, 17.33M/8.67M в линейной). Рисуется ТОЛЬКО в .weeks —
+       на .axis рядом с лейблами линии смотрелись шумом. Цвет/alpha
+       (0.12) — слабые, чтобы не конкурировать с барами и threshold. */
     .axis {{
       display: flex; flex-direction: column; justify-content: space-between; align-items: end;
       padding: 18px 10px 26px 0; color: #8e97a8; font-size: 13px;
-      background: repeating-linear-gradient(0deg, transparent 0 68px, var(--grid) 68px 69px);
     }}
     .weeks {{
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
       padding-top: 18px;
-      background: repeating-linear-gradient(0deg, transparent 0 68px, var(--grid) 68px 69px);
+      background: linear-gradient(
+        180deg,
+        transparent 0 calc(33.333% - 0.5px),
+        var(--grid) calc(33.333% - 0.5px) calc(33.333% + 0.5px),
+        transparent calc(33.333% + 0.5px) calc(66.667% - 0.5px),
+        var(--grid) calc(66.667% - 0.5px) calc(66.667% + 0.5px),
+        transparent calc(66.667% + 0.5px) 100%
+      );
     }}
     .week {{
       /* top padding 12px симметричен bottom, чтобы W-лэйбл не лип к верхней рамке карточки. */
