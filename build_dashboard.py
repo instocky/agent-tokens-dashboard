@@ -726,10 +726,17 @@ def _render_weekly_bars(
     margin = {"top": 18, "right": 20, "bottom": 60, "left": 92}
     inner_w = width - margin["left"] - margin["right"]
     inner_h = height - margin["top"] - margin["bottom"]
-    week_group_w = inner_w / len(weeks)
-    day_slot = week_group_w / 10
+    # Layout (в единицах day-slot): 1 слева + 4*(7+2 между) + 1 справа = 36.
+    n_weeks = len(weeks)
+    n_days = 7
+    left_pad = 1          # 1 day-width padding слева
+    inter_week_gap = 2    # 2 day-width gap между неделями
+    right_pad = 1         # 1 day-width padding справа
+    slot_total = left_pad + n_weeks * n_days + (n_weeks - 1) * inter_week_gap + right_pad
+    day_slot = inner_w / slot_total
+    week_group_w = (n_days + inter_week_gap) * day_slot
     bar_w = day_slot - 3
-    day_area_w = day_slot * 7
+    day_area_w = day_slot * n_days
 
     if scale == "log":
         y_min, y_max, y_ticks = y_info
@@ -778,7 +785,7 @@ def _render_weekly_bars(
 
     groups = []
     for w_idx, week in enumerate(weeks):
-        x0 = margin["left"] + w_idx * week_group_w
+        x0 = margin["left"] + left_pad * day_slot + w_idx * week_group_w
         palette = WEEK_PALETTE[w_idx]
         bar_parts = []
         for d_idx in range(7):
