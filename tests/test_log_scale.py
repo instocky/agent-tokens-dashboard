@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from build_dashboard import (  # noqa: E402
     Week,
     _y_ticks_for_log,
-    _render_weekly_bars,
+    _render_weekly_grid,
     WEEKDAY_LABELS,
 )
 
@@ -81,57 +81,71 @@ def test_y_ticks_for_log_tight_range() -> None:
     assert len(ticks) >= 2, f"expected ≥2 ticks, got {ticks}"
 
 
-def test_render_weekly_bars_linear_smoke() -> None:
-    """Linear scale рендерит SVG без падения, ≥1 bar + labels."""
+def test_render_weekly_grid_linear_smoke() -> None:
+    """Linear: HTML-грид с .week / .bar.history / .bar.future классами."""
     weeks = _make_weeks([
         [8_000_000, 9_000_000, 6_500_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
         [14_000_000, 17_000_000, 26_000_000, 4_000_000, 13_000_000, 11_000_000, 9_000_000],
     ])
-    svg = _render_weekly_bars(weeks, "linear", 27_000_000)
-    assert "W-30" in svg
-    assert "W-31" in svg
-    assert "26 000 000" in svg  # tick label
-    assert "fill-orange-500" in svg  # palette class
+    html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    assert "W-30" in html
+    assert "W-31" in html
+    assert 'class="week' in html
+    assert 'class="bar history"' in html
+    # 7 дней × 2 недели = 14 баров с height:NN.N%
+    assert html.count('style="height:') == 14
+    # Лейблы дней под барами
+    for label in WEEKDAY_LABELS:
+        assert f"<span>{label}</span>" in html
 
 
-def test_render_weekly_bars_log_smoke() -> None:
-    """Log scale рендерит SVG, использует fmt_tokens для тиков."""
+def test_render_weekly_grid_log_smoke() -> None:
+    """Log: те же классы, но высоты считаются по log-шкале."""
     weeks = _make_weeks([
         [8_000_000, 9_000_000, 6_500_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
         [14_000_000, 17_000_000, 26_000_000, 4_000_000, 13_000_000, 11_000_000, 9_000_000],
     ])
     log_info = _y_ticks_for_log(weeks)
     assert log_info is not None
-    svg = _render_weekly_bars(weeks, "log", log_info)
-    # Тики лога должны быть в K/M формате.
-    assert "10.00M" in svg or "100.00M" in svg, f"expected K/M tick label, got:\n{svg[:500]}"
-    assert "log floor" not in svg  # все дни > 0
+    html = _render_weekly_grid(weeks, "log", log_info)
+    # В log шкале диапазон 9M..26M сжимается (оба в одной декаде),
+    # поэтому 9M (второй бар) должен быть ВЫШЕ, чем в linear (где 26M = 100%).
+    linear_html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    import re
+    def _h(s: str, day: str) -> float:
+        m = re.search(rf'class="bar (?:history|accent)" style="height:([\d.]+)%" title="[^"]*, {day}: ', s)
+        return float(m.group(1)) if m else -1.0
+    # Вторник W-30 = 9M
+    assert _h(html, "Вт") > _h(linear_html, "Вт"), "log должен сжимать диапазон, делая нижние значения выше"
 
 
-def test_render_weekly_bars_log_zero_day() -> None:
-    """0-value день в log scale → floor bar (2px, disabled-color), не пропадает."""
+def test_render_weekly_grid_current_week_accent() -> None:
+    """Current week → class 'week current' (is_current=True), past weeks — 'week'."""
     weeks = _make_weeks([
-        [0, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
+        [8_000_000] * 7,  # past
+        [9_000_000] * 7,  # current (is_current=True)
     ])
-    log_info = _y_ticks_for_log(weeks)
-    assert log_info is not None
-    svg = _render_weekly_bars(weeks, "log", log_info)
-    # Floor bar помечен "log floor" в title.
-    assert "log floor" in svg, "expected log floor marker for 0-value day"
-    # День-лейбл (Пн) всё равно рендерится.
-    assert WEEKDAY_LABELS[0] in svg
+    html = _render_weekly_grid(weeks, "linear", 10_000_000)
+    assert 'class="week current"' in html
+    assert html.count('class="week current"') == 1
 
 
-def test_render_weekly_bars_log_none_day_unchanged() -> None:
-    """None-day (no data) в log scale — тот же dashed placeholder, не floor bar."""
+def test_render_weekly_grid_none_day_title() -> None:
+    """None-day → bar future с title 'нет данных'."""
     weeks = _make_weeks([
         [None, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
     ])
-    log_info = _y_ticks_for_log(weeks)
-    assert log_info is not None
-    svg = _render_weekly_bars(weeks, "log", log_info)
-    assert "нет данных" in svg  # None-day title
-    assert "log floor" not in svg  # 0-day не путаем с None
+    html = _render_weekly_grid(weeks, "linear", 20_000_000)
+    assert 'class="bar future"' in html
+    assert "нет данных" in html
+    # 0-day НЕ должен получить future-стиль; это history с height=0%.
+    weeks2 = _make_weeks([
+        [0, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
+    ])
+    html2 = _render_weekly_grid(weeks2, "linear", 20_000_000)
+    # Понедельник с 0 → history (не future), height=0% (CSS min-height даст 6px)
+    assert 'class="bar history" style="height:0.0%"' in html2
+    assert 'W-30, Пн: 0' in html2
 
 
 def test_persistence_script_in_dashboard_html() -> None:
@@ -163,10 +177,10 @@ def main() -> int:
         test_y_ticks_for_log_all_none,
         test_y_ticks_for_log_all_zero,
         test_y_ticks_for_log_tight_range,
-        test_render_weekly_bars_linear_smoke,
-        test_render_weekly_bars_log_smoke,
-        test_render_weekly_bars_log_zero_day,
-        test_render_weekly_bars_log_none_day_unchanged,
+        test_render_weekly_grid_linear_smoke,
+        test_render_weekly_grid_log_smoke,
+        test_render_weekly_grid_current_week_accent,
+        test_render_weekly_grid_none_day_title,
         test_persistence_script_in_dashboard_html,
     ]
     passed = 0

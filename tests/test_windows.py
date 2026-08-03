@@ -22,25 +22,26 @@ from build_dashboard import (  # noqa: E402
 
 # (hour, expected_label, expected_wraps, expected_hours)
 # Граничные часы — каждая граница между слотами должна попасть в правильный.
+# Лейблы half-open: 03:00–08:00 значит [3, 8), т.е. часы 3,4,5,6,7.
 BOUNDARIES: list[tuple[int, str, bool, list[int]]] = [
-    # ---- slot 0: 03:00-07:59 ----
-    (3,  "03:00–07:59", False, [3, 4, 5, 6, 7]),
-    (4,  "03:00–07:59", False, [3, 4, 5, 6, 7]),
-    (7,  "03:00–07:59", False, [3, 4, 5, 6, 7]),
-    # ---- slot 1: 08:00-12:59 ----
-    (8,  "08:00–12:59", False, [8, 9, 10, 11, 12]),
-    (12, "08:00–12:59", False, [8, 9, 10, 11, 12]),
-    # ---- slot 2: 13:00-17:59 ----
-    (13, "13:00–17:59", False, [13, 14, 15, 16, 17]),
-    (17, "13:00–17:59", False, [13, 14, 15, 16, 17]),
-    # ---- slot 3: 18:00-22:59 ----
-    (18, "18:00–22:59", False, [18, 19, 20, 21, 22]),
-    (22, "18:00–22:59", False, [18, 19, 20, 21, 22]),
-    # ---- slot 4: 23:00-02:59 (wraps) ----
-    (23, "23:00–02:59", True,  [23, 0, 1, 2]),
-    (0,  "23:00–02:59", True,  [23, 0, 1, 2]),
-    (1,  "23:00–02:59", True,  [23, 0, 1, 2]),
-    (2,  "23:00–02:59", True,  [23, 0, 1, 2]),
+    # ---- slot 0: 03:00-08:00 (morning) ----
+    (3,  "03:00–08:00", False, [3, 4, 5, 6, 7]),
+    (4,  "03:00–08:00", False, [3, 4, 5, 6, 7]),
+    (7,  "03:00–08:00", False, [3, 4, 5, 6, 7]),
+    # ---- slot 1: 08:00-13:00 (midday) ----
+    (8,  "08:00–13:00", False, [8, 9, 10, 11, 12]),
+    (12, "08:00–13:00", False, [8, 9, 10, 11, 12]),
+    # ---- slot 2: 13:00-18:00 (afternoon) ----
+    (13, "13:00–18:00", False, [13, 14, 15, 16, 17]),
+    (17, "13:00–18:00", False, [13, 14, 15, 16, 17]),
+    # ---- slot 3: 18:00-23:00 (evening) ----
+    (18, "18:00–23:00", False, [18, 19, 20, 21, 22]),
+    (22, "18:00–23:00", False, [18, 19, 20, 21, 22]),
+    # ---- slot 4: 23:00-03:00 (night, wraps) ----
+    (23, "23:00–03:00", True,  [23, 0, 1, 2]),
+    (0,  "23:00–03:00", True,  [23, 0, 1, 2]),
+    (1,  "23:00–03:00", True,  [23, 0, 1, 2]),
+    (2,  "23:00–03:00", True,  [23, 0, 1, 2]),
 ]
 
 
@@ -86,7 +87,7 @@ def test_compute_current_window_day_slot() -> None:
     }
     now = _now(14)
     total, entries, label = compute_current_window(hourly, now)
-    assert label == "13:00–17:59", f"label={label}"
+    assert label == "13:00–18:00", f"label={label}"
     assert total == 1000, f"total={total}"  # 100+200+300+0+400
     assert [h for h, _, _ in entries] == [13, 14, 15, 16, 17]
     assert all(d == today for _, _, d in entries), "all entries must be today"
@@ -107,7 +108,7 @@ def test_compute_current_window_night_slot() -> None:
     }
     now = _now(1)
     total, entries, label = compute_current_window(hourly, now)
-    assert label == "23:00–02:59", f"label={label}"
+    assert label == "23:00–03:00", f"label={label}"
     assert total == 50 + 60 + 70 + 80, f"total={total}"
     assert [h for h, _, _ in entries] == [23, 0, 1, 2]
     # 23 → вчера, 0/1/2 → сегодня
@@ -122,7 +123,7 @@ def test_compute_current_window_missing_data() -> None:
     today = datetime(2026, 8, 3, tzinfo=MSK).date()
     now = _now(13)
     total, entries, label = compute_current_window({}, now)
-    assert label == "13:00–17:59"
+    assert label == "13:00–18:00"
     assert total == 0
     assert len(entries) == 5
     assert all(v == 0 for _, v, _ in entries)
