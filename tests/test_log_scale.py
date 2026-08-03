@@ -148,6 +148,37 @@ def test_render_weekly_grid_none_day_title() -> None:
     assert 'W-30, Пн: 0' in html2
 
 
+def test_render_weekly_grid_week_total() -> None:
+    """Каждая карточка недели показывает сумму в M в .week-total.
+
+    None-дни не должны попадать в сумму (это no data, не 0).
+    W-30: 14M + 17M + 26M + 4M + 13M = 74M; 8M + 9M + 6.5M + 11M + 12M + 16M = 62.5M.
+    """
+    weeks = _make_weeks([
+        # past week: 6 non-None дней = 62.5M (None в понедельник игнорируется)
+        [None, 8_000_000, 9_000_000, 6_500_000, 11_000_000, 12_000_000, 16_000_000],
+        # current week: 5 non-None дней (Сб/Вс None) = 74M
+        [14_000_000, 17_000_000, 26_000_000, 4_000_000, 13_000_000, None, None],
+    ])
+    html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    import re
+    totals = re.findall(
+        r'<span class="week-total" title="[^"]+">([\d.]+M)</span>', html
+    )
+    assert len(totals) == 2, f"expected 2 week-total, got {totals}"
+    assert totals[0] == "62.50M", f"past week total = {totals[0]}"
+    assert totals[1] == "74.00M", f"current week total = {totals[1]}"
+
+
+def test_render_weekly_grid_week_total_all_none() -> None:
+    """Вся неделя в None → сумма 0.00M, не пусто и не падает."""
+    weeks = _make_weeks([
+        [None] * 7,
+    ])
+    html = _render_weekly_grid(weeks, "linear", 1_000_000)
+    assert '<span class="week-total" title="Сумма за W-30">0.00M</span>' in html
+
+
 def test_persistence_script_in_dashboard_html() -> None:
     """Сгенерированный dashboard.html должен содержать localStorage-логику.
 
@@ -181,6 +212,8 @@ def main() -> int:
         test_render_weekly_grid_log_smoke,
         test_render_weekly_grid_current_week_accent,
         test_render_weekly_grid_none_day_title,
+        test_render_weekly_grid_week_total,
+        test_render_weekly_grid_week_total_all_none,
         test_persistence_script_in_dashboard_html,
     ]
     passed = 0

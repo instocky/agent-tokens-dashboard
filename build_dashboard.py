@@ -476,6 +476,7 @@ def _render_weekly_grid(
       .bar.future  — будущие дни или None-данные (пунктир, opacity 0.7)
 
     Высота — % от 260px контейнера (через _bar_height_pct).
+    В шапке карточки — W-лэйбл слева + суммарный объём за неделю в M справа.
     """
     today_d = date.today()
     out: list[str] = []
@@ -503,11 +504,17 @@ def _render_weekly_grid(
             bars.append(
                 f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
             )
+        # Сумма за неделю — только по дням с данными (None — no data, не 0).
+        week_total = sum(v for v in week.days if v is not None)
+        week_total_str = f"{week_total / 1_000_000:.2f}M"
         week_cls = "week current" if week.is_current else "week"
         days_html = "".join(f"<span>{lbl}</span>" for lbl in WEEKDAY_LABELS)
         out.append(
             f'<div class="{week_cls}">'
-            f'<div class="week-head">{week.label}</div>'
+            f'<div class="week-head">'
+            f'<span class="week-label">{week.label}</span>'
+            f'<span class="week-total" title="Сумма за {week.label}">{week_total_str}</span>'
+            f'</div>'
             f'<div class="bars">{"".join(bars)}</div>'
             f'<div class="days">{days_html}</div>'
             f"</div>"
@@ -720,7 +727,8 @@ def render_html(
       background: repeating-linear-gradient(0deg, transparent 0 68px, var(--grid) 68px 69px);
     }}
     .week {{
-      padding: 0 12px 12px; border-radius: 18px;
+      /* top padding 12px симметричен bottom, чтобы W-лэйбл не лип к верхней рамке карточки. */
+      padding: 12px; border-radius: 18px;
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
       border: 1px solid rgba(255,255,255,0.03);
     }}
@@ -730,9 +738,16 @@ def render_html(
       box-shadow: inset 0 0 0 1px rgba(139,92,246,0.06);
     }}
     .week-head {{
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
       margin-bottom: 12px; color: var(--muted);
       font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
     }}
+    .week-total {{
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 12px; font-weight: 700; color: var(--ink);
+      text-transform: none; letter-spacing: -0.01em;
+    }}
+    .week.current .week-total {{ color: var(--accent); }}
     .bars {{ display: flex; align-items: end; gap: 7px; height: 260px; }}
     .bar {{
       flex: 1; border-radius: 10px 10px 0 0; min-height: 6px;
