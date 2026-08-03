@@ -12,7 +12,8 @@ Task Scheduler trigger.
 ## What it does
 
 - Shows tokens used in the current calendar hour (Europe/Moscow)
-- Shows tokens used in the 03:00–07:59 morning window with per-hour breakdown
+- Shows tokens used in the **active 5-hour slot** (see "Active window" below)
+  with per-hour breakdown
 - Shows a 4-week grouped-bar comparison (Mon–Sun per week, oldest → current)
 - Marks future days and days with no logged rows as `disabled` (dashed), not as zero
 
@@ -47,7 +48,7 @@ Requires **Python 3.9+**, stdlib only (no `pip install`).
    (`file:...?mode=ro`) — never blocks the agent's writer
 2. Aggregate `input + output` tokens by **MSK date + hour** in SQL
    (`date(ts/1000, 'unixepoch', '+3 hours')`)
-3. Compute three views: current hour, morning window, last 4 ISO weeks
+3. Compute three views: current hour, active 5h slot, last 4 ISO weeks
 4. Render a self-contained `dashboard.html` with inline CSS and an inline
    SVG grouped-bar chart — no Tailwind, no CDN, no external JSON
 5. Overwrite `dashboard.html` atomically
@@ -90,7 +91,7 @@ first; the script assumes milliseconds.
 | `--no-write`  | `false`                              | Print to stdout instead of write |
 | `--quiet`     | `false`                              | Suppress build log               |
 
-Constants (timezone offset, morning hours, week count, palette) live at the
+Constants (timezone offset, slot table, week count, palette) live at the
 top of `build_dashboard.py` as module-level constants.
 
 ---
@@ -116,8 +117,10 @@ Register-ScheduledTask -TaskName "agent-tokens-dashboard-refresh" `
 
 - **Time zone:** `Europe/Moscow` (UTC+3 year-round, hardcoded constant in
   the script — no DST since 2014)
-- **Calendar hours only:** no rolling windows. `HH:00:00`–`HH:59:59`
-- **Morning window:** `03:00`–`07:59` = 5 calendar hours, summed
+- **Calendar hours only:** every aggregate bucket is `HH:00:00`–`HH:59:59`
+- **Active window:** 5-hour slot, selected by current MSK hour. 4 day
+  slots (`03–07`, `08–12`, `13–17`, `18–22`) + 1 night slot (`23–02`,
+  4 hours crossing midnight). See PRD §6.3 for the slot table.
 - **Weekly chart:** last 4 ISO weeks, oldest on the left, current on the
   right. Future days of the current week render as `disabled` (dashed
   placeholder), not as zero
