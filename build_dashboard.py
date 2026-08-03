@@ -492,7 +492,9 @@ def _render_morning_bars(per_hour: dict[int, int], max_value: int) -> str:
         y = height - h_px
         bars.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h_px:.1f}" rx="3" '
-            f'fill="#257179" />'
+            f'fill="#257179">'
+            f'<title>{h:02d}:00–{h:02d}:59: {fmt_int(v)}</title>'
+            f'</rect>'
         )
         bars.append(
             f'<text x="{x + bar_w/2:.1f}" y="{height - 1}" text-anchor="middle" '
@@ -542,7 +544,9 @@ def _render_weekly_bars(weeks: list[Week], max_value: int) -> str:
                     f'<rect x="{x:.1f}" y="{margin["top"] + 10}" width="{bar_w:.1f}" '
                     f'height="{inner_h - 10:.1f}" rx="7" '
                     f'fill="rgba(216,208,195,0.35)" '
-                    f'stroke="rgba(216,208,195,0.7)" stroke-dasharray="5 5" />'
+                    f'stroke="rgba(216,208,195,0.7)" stroke-dasharray="5 5">'
+                    f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: нет данных</title>'
+                    f'</rect>'
                 )
                 # день-лейбл всё равно под ним
                 bar_parts.append(
@@ -555,7 +559,9 @@ def _render_weekly_bars(weeks: list[Week], max_value: int) -> str:
             fill_class = palette["bright_tw"] if is_weekend else palette["solid_tw"]
             bar_parts.append(
                 f'<rect class="{fill_class}" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
-                f'height="{h_px:.1f}" rx="7" opacity="{"1" if week.is_current else "0.88"}" />'
+                f'height="{h_px:.1f}" rx="7" opacity="{"1" if week.is_current else "0.88"}">'
+                f'<title>{week.label}, {WEEKDAY_LABELS[d_idx]}: {fmt_int(value)}</title>'
+                f'</rect>'
             )
             bar_parts.append(
                 f'<text x="{x + bar_w/2:.1f}" y="{height - 38}" text-anchor="middle" '
