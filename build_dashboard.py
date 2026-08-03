@@ -56,32 +56,6 @@ WEEKDAY_LABELS: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб
 # на завтра (формула зависит от today_spent и days_left, оба обновляются).
 WEEKLY_CAP_TOKENS: int = 75_000_000
 
-# Палитра по индексу недели (0 = самая старая, WEEK_COUNT-1 = текущая).
-# Дублирует дизайн-токены из dashboard-chart-prototype.html.
-WEEK_PALETTE: list[dict[str, str]] = [
-    {  # W-N (oldest)
-        "solid": "#d95d39", "solid_tw": "fill-orange-500", "solid_bg": "bg-orange-500",
-        "bright": "#f6ad55", "bright_tw": "fill-orange-300",
-        "stroke": "stroke-orange-500", "stroke_bright": "stroke-orange-300",
-    },
-    {  # W-N+1
-        "solid": "#257179", "solid_tw": "fill-teal-600", "solid_bg": "bg-teal-600",
-        "bright": "#4fd1c5", "bright_tw": "fill-teal-400",
-        "stroke": "stroke-teal-600", "stroke_bright": "stroke-teal-400",
-    },
-    {  # W-N+2
-        "solid": "#d9a441", "solid_tw": "fill-amber-500", "solid_bg": "bg-amber-500",
-        "bright": "#f6d365", "bright_tw": "fill-amber-300",
-        "stroke": "stroke-amber-500", "stroke_bright": "stroke-amber-300",
-    },
-    {  # W-N+3 (current)
-        "solid": "#4f5d75", "solid_tw": "fill-slate-600", "solid_bg": "bg-slate-600",
-        "bright": "#94a3b8", "bright_tw": "fill-slate-400",
-        "stroke": "stroke-slate-600", "stroke_bright": "stroke-slate-400",
-    },
-]
-
-
 # ---- domain types ----------------------------------------------------------
 
 @dataclass(frozen=True)

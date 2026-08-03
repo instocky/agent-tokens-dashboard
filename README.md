@@ -97,8 +97,25 @@ first; the script assumes milliseconds.
 | `--no-write`  | `false`                              | Print to stdout instead of write |
 | `--quiet`     | `false`                              | Suppress build log               |
 
-Constants (timezone offset, slot table, week count, palette, **weekly cap**)
+Constants (timezone offset, slot table, week count, **weekly cap**)
 live at the top of `build_dashboard.py` as module-level constants.
+
+---
+
+## Manual rebuild
+
+For an on-demand rebuild (debugging, after schema change, before/after a
+heavy workload), double-click `refresh-dashboard.cmd` in Explorer — it
+`cd`s to its own directory, runs `python build_dashboard.py`, prints the
+build log, and pauses only on a non-zero exit so errors stay inspectable.
+Pinnable to the taskbar or Start menu.
+
+Equivalent manual command (anything `cmd` does under the hood):
+
+```powershell
+cd "C:\Projects\Python\0803_agent-tokens-dashboard"
+python build_dashboard.py
+```
 
 ---
 
@@ -110,12 +127,18 @@ The dashboard is a static file — schedule `build_dashboard.py` to refresh it.
 # One-shot, every 5 minutes, as the current user
 $action = New-ScheduledTaskAction `
     -Execute "python.exe" `
-    -Argument "C:\Projects\Python\0803_sqlite-script\build_dashboard.py --quiet"
+    -Argument "C:\Projects\Python\0803_agent-tokens-dashboard\build_dashboard.py --quiet"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 5)
 Register-ScheduledTask -TaskName "agent-tokens-dashboard-refresh" `
     -Action $action -Trigger $trigger -Description "Rebuild dashboard.html every 5 min"
 ```
+
+**Two-tier refresh.** The 5-minute scheduler refreshes **data** (SQLite →
+HTML). In between rebuilds, the browser auto-refreshes the open tab every
+**60 seconds** via `<meta http-equiv="refresh" content="60">` in the
+generated HTML, so the last build is always on screen without manual F5
+and without a persistent process in memory.
 
 ---
 
@@ -127,8 +150,9 @@ Register-ScheduledTask -TaskName "agent-tokens-dashboard-refresh" `
 - **Today card:** running total since `00:00` MSK up to and including
   the current in-progress hour; recomputed on every rebuild
 - **Active window:** 5-hour slot, selected by current MSK hour. 4 day
-  slots (`03–07`, `08–12`, `13–17`, `18–22`) + 1 night slot (`23–02`,
-  4 hours crossing midnight). See PRD §6.3 for the slot table.
+  slots (`03:00–08:00`, `08:00–13:00`, `13:00–18:00`, `18:00–23:00`) + 1
+  night slot (`23:00–03:00`, 4 hours crossing midnight, half-open). See
+  PRD §6.3 for the slot table.
 - **Weekly chart:** last 4 ISO weeks, oldest on the left, current on the
   right. Future days of the current week render as `disabled` (dashed
   placeholder), not as zero
@@ -138,9 +162,17 @@ Register-ScheduledTask -TaskName "agent-tokens-dashboard-refresh" `
 ## Project layout
 
 ```
-build_dashboard.py   # the only script — open/read/aggregate/render
-dashboard.html       # generated output (gitignored, regenerated on run)
-runtime-state.sqlite # the agent's local DB (gitignored, 446MB on this box)
+build_dashboard.py               # the only script — open/read/aggregate/render
+tests/                           # unit tests, no pytest — run each file directly
+  test_windows.py                # 4 — slot boundaries (day/night, midnight wrap)
+  test_log_scale.py              # 11 — linear/log, week-total, localStorage script
+  test_weekly_cap.py             # 15 — compute_weekly_threshold + render
+concepts/                        # design exploration v2 — 4 visual directions
+                                 # (concept-ops chosen for production; others retained)
+refresh-dashboard.cmd            # one-click Windows rebuild helper (Explorer / taskbar)
+prd-token-dashboard-prototype.md # spec (PRD)
+dashboard.html                   # generated output (gitignored, regenerated on run)
+runtime-state.sqlite             # the agent's local DB (gitignored, 446MB on this box)
 ```
 
 The prototype HTML (`dashboard-chart-prototype.html`) and the reference

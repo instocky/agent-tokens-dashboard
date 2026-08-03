@@ -129,8 +129,8 @@ def test_render_threshold_appears_on_current_day_only() -> None:
 
     # Threshold-блок присутствует
     assert 'class="threshold"' in html
-    # Подпись с порогом
-    assert "порог 10.37M" in html
+    # Подпись со значением (label — только число, "порог" живёт в легенде)
+    assert "10.37M" in html
 
     # В W-31 порога нет (count() == 1 — только в W-32)
     w31_section = html.split('W-32')[0]

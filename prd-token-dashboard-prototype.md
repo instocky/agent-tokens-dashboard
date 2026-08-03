@@ -10,6 +10,9 @@
 Изменения: 2026-08-03 — §6.2/§6.3/§7.4 — окно 03-07 заменено на скользящее 5-часовое (5 слотов).
 Изменения: 2026-08-03 — §2/§7.4 — добавлена карточка «Токены / сегодня» (running total с 00:00 до текущего часа включительно).
 Изменения: 2026-08-03 — §6.5/§7.5/FR-8 — добавлен weekly cap threshold (красная пунктирная полоска на текущем дне).
+Изменения: 2026-08-03 — §7.2/§7.4 — добавлены 60s `<meta http-equiv="refresh">` для UI-freshness поверх 5-мин scheduler-build (two-tier refresh) и сегментированный переключатель linear/log шкалы weekly chart с приоритетом URL `?scale=` → `localStorage[tokenDashboardScale]` → 'log' default.
+Изменения: 2026-08-03 — §7.3 — зафиксировано визуальное направление concept-ops (тёмная тема, bento KPI, mono-цифры); 4 concept-направления в `concepts/` сохранены как reference.
+Изменения: 2026-08-03 — §7.4 — добавлена сумма недели (M) в шапку каждой W-карточки; суммируются только дни с данными (None исключаются).
 
 ## 2. Product Goal
 
@@ -156,7 +159,17 @@ days_left = 8 − isoweekday(today)         # Пн=7, Вт=6, …, Вс=1
 
 ### 7.2 Update Model
 
-HTML пересобирается локально каждые 5 минут через Windows Task Scheduler.
+Двухуровневое обновление:
+
+- **Данные** (SQLite → HTML): каждые 5 минут через Windows Task Scheduler
+  (`build_dashboard.py` → `dashboard.html` атомарно).
+- **UI freshness** (HTML → браузер): каждые 60 секунд через
+  `<meta http-equiv="refresh" content="60">` в `<head>`. Гарантирует, что
+  последний билд всегда виден без ручного F5, без websocket и без
+  постоянного процесса в памяти.
+
+`refresh-dashboard.cmd` — one-click rebuild для отладки/ручного запуска
+(Explorer / Start / taskbar); не часть шедулера, дополнительный путь.
 
 ### 7.3 Visual Direction
 
