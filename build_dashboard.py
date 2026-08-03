@@ -784,31 +784,28 @@ def render_html(
       border: 1px solid rgba(255,255,255,0.04);
     }}
     .plot {{ display: grid; grid-template-columns: 94px 1fr; gap: 18px; }}
-    /* Шкала лога: 0M — ВЕРХ .days (внутри .week, над Пн-Вс), 100M — самый верх.
-       Расстояние «100M → 0M» — это bar area: 12px padding-top + ~28px .week-head
-       (12px font + 12px margin-bottom) + 260px .bars + 10px .days margin-top ≈ 310px.
-       На полной высоте .week (~348px) это 0M ≈ 89.08%.
-       От 0M вверх: 1M на 1/3 (= 59.39% от верха .week), 10M на 2/3 (= 29.69%).
-       Красные линии НЕ рисуем — 0M/100M существуют только как ментальные якоря.
-       .axis лейблы на тех же Y, что и серые линии сетки в .weeks (translateY(-50%)),
-       чтобы линия проходила ТОЧНО через центр строки подписи. */
+    /* Шкала (log и linear): одна координатная система для баров, лейблов и гридлайнов.
+       Диапазон 0%..100% .axis = 100M..100K (лог) или y_max..0 (linear).
+       4 лейбла: 0% (top = 100M/y_max), 29.7% (10M / 2y_max/3),
+                  59.4% (1M / y_max/3), 89.08% (100K / 0).
+       .bars тоже занимает 0%..(100% - 10.92%) = ровно тот же диапазон, поэтому
+       height:X% на .bar автоматически ложится на те же Y, что гридлайны и лейблы. */
     .axis {{
       position: relative; color: #8e97a8; font-size: 13px;
     }}
     .axis span {{
       position: absolute; right: 10px; line-height: 1;
     }}
-    /* :nth-child по порядку рендера: 1=100M, 2=10M, 3=1M, 4=100K.
-       100K сидит ровно на 0M (верх .days) — на логе 0M ≡ 100K ≡ 10^5, поэтому
-       это одна точка, а не «снаружи шкалы». 4-й лейбл сцентрирован по той же
-       translateY(-50%) схеме, что 10M/1M, чтобы визуально лечь на 0M. */
+    /* :nth-child по порядку рендера: 1=100M (лог) / y_max (linear), 2=10M/2y_max/3,
+       3=1M/y_max/3, 4=100K/0. 4-й лейбл сидит ровно на 0M — на логе 0M ≡ 100K.
+       translateY(-50%) центрирует строку подписи по тем же Y, что гридлайны. */
     .axis span:nth-child(1) {{ top: 0; }}
     .axis span:nth-child(2) {{ top: 29.7%; transform: translateY(-50%); }}
     .axis span:nth-child(3) {{ top: 59.4%; transform: translateY(-50%); }}
     .axis span:nth-child(4) {{ top: 89.08%; transform: translateY(-50%); }}
-    /* .weeks — без padding-top, без красных линий. Только серые линии сетки на
-       29.7% / 59.4% (на тех же Y, что центры 10M/1M). grid-stretch в .plot
-       даёт .axis ту же высоту, что и .weeks. */
+    /* .weeks — без padding-top, без красных линий. Только серые гридлайны на
+       29.7% / 59.4% (на тех же Y, что центры 10M/1M или 2y_max/3, y_max/3).
+       grid-stretch в .plot даёт .axis ту же высоту, что и .weeks (= .week). */
     .weeks {{
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
       background: linear-gradient(
@@ -821,8 +818,16 @@ def render_html(
       );
     }}
     .week {{
-      /* top padding 12px симметричен bottom, чтобы W-лэйбл не лип к верхней рамке карточки. */
-      padding: 12px; border-radius: 18px;
+      /* Chart area: 0%..89.08% от .week (это и есть шкала: 100M на top, 100K на 89.08%).
+         .week-head и .days вынесены absolute по краям и лежат ПОВЕРХ .bars (z-index),
+         поэтому бары реально занимают весь диапазон 0%..89.08%, а не подрезанный
+         .week-head'ом сверху. min-height фиксирует высоту карточки, чтобы проценты
+         гридлайнов и баров сходились (без него .week схлопывается, т.к. абсолютные
+         дети не участвуют в auto-flow). */
+      position: relative;
+      padding: 0 12px 12px;  /* top padding уехал на top:12px у .week-head */
+      min-height: 360px;
+      border-radius: 18px;
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
       border: 1px solid rgba(255,255,255,0.03);
     }}
@@ -832,8 +837,14 @@ def render_html(
       box-shadow: inset 0 0 0 1px rgba(139,92,246,0.06);
     }}
     .week-head {{
+      /* Абсолютно сверху карточки, поверх баров. top:12px даёт ту же воздушную
+         прослойку, что padding-top:12px в старом лейауте; z-index:3 перекрывает
+         самый высокий бар (100M = top of .bars). */
+      position: absolute; top: 12px; left: 12px; right: 12px; z-index: 3;
       display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-      margin-bottom: 12px; color: var(--muted);
+      margin: 0;  /* margin-bottom:12px в старом лейауте больше не нужен — .bars сам
+                      позиционируется сверху через top:0 */
+      color: var(--muted);
       font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
     }}
     .week-total {{
@@ -842,13 +853,24 @@ def render_html(
       text-transform: none; letter-spacing: -0.01em;
     }}
     .week.current .week-total {{ color: var(--accent); }}
-    .bars {{ display: flex; gap: 7px; height: 260px; }}
+    /* .bars — absolute, занимает ровно 0%..(100% - 10.92%) .week.
+       bottom:38px = 1px border-top + 10px padding-top + ~14px line-height
+                  + 12px .week padding-bottom + 1px буфер ≈ 38px.
+       Высота .bars = .week - 38 = ~322px при min-height:360px. Это та же
+       «видимая» высота, что была у 260px-.bars в старом лейауте + сверху
+       добавилось ~30px пространства для лейаута 100M. bar's height:X%
+       теперь = X% от 0%..89.08% .week, и 10M-бар (X=66.7%) топом
+       ровно на 29.7% .week = 10M-лейбл. */
+    .bars {{
+      position: absolute; top: 0; left: 12px; right: 12px; bottom: 38px;
+      display: flex; gap: 7px; z-index: 1;
+    }}
     .bar-cell {{
-      /* Обёртка вокруг одного бара. Даёт position:relative для абсолютного
-         позиционирования threshold-линии; сам .bar теперь flex-child .bar-cell,
+      /* Обёртка вокруг одного бара. position:relative — для абсолютного
+         позиционирования threshold-линии; сам .bar — flex-child .bar-cell,
          а не .bars — иначе threshold не привязать к ширине одного дня.
-         .bars использует align-items по умолчанию (stretch) — это растягивает
-         .bar-cell на всю высоту 260px, без чего height:N% на .bar уехал бы в 0. */
+         align-items: stretch в .bars растягивает .bar-cell на всю высоту
+         .bars, без чего height:N% на .bar уехал бы в 0. */
       position: relative; flex: 1; min-width: 0; min-height: 6px;
       display: flex; align-items: end;
     }}
@@ -880,8 +902,13 @@ def render_html(
       color: #fca5a5; text-transform: none; letter-spacing: 0;
     }}
     .days {{
+      /* Абсолютно внизу карточки, поверх .bars. bottom:12px = .week padding-bottom.
+         z-index:2 перекрывает бар, у которого 100K (height 0%) сидит ровно на
+         верхней границе .days (= 89.08% .week = 100K-лейбл). margin-top:10px
+         из старого лейаута не нужен — .bars сам отступает через bottom:38px. */
+      position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 2;
       display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px;
-      margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--history-2);
+      margin: 0; padding-top: 10px; border-top: 1px solid var(--history-2);
       color: var(--muted); font-size: 12px; text-align: center;
     }}
     @media (max-width: 980px) {{

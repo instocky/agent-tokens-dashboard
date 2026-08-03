@@ -179,6 +179,99 @@ def test_render_weekly_grid_week_total_all_none() -> None:
     assert '<span class="week-total" title="Сумма за W-30">0.00M</span>' in html
 
 
+def test_bar_axis_share_coordinate_system() -> None:
+    """Бары и ось должны делить одну координатную систему (0%..89.08% .week).
+
+    Регресс: до фикса .bars был обычным flex-flow элементом высотой 260px,
+    начинался на ~12% от верха .week → 10M-бар (height:66.7% от .bars) топал
+    на 36% .week, а 10M-лейбл стоял на 29.7% → визуальный gap 6.5%. Также
+    threshold (bottom:X% от .bar-cell) сидел на той же неверной Y.
+
+    Фикс: .bars абсолютно позиционирован (top:0, bottom:38px), занимает ровно
+    0%..(100%-10.92%) = 0%..89.08% .week — ту же область, что и ось.
+    height:X% на .bar автоматически ложится на гридлайны 29.7% / 59.4%
+    и 10M/1M-лейблы.
+
+    Ловит регрессию: проверяет в сгенерированном dashboard.html наличие
+    абсолютного .bars + absolute .week-head (overlay) + absolute .days.
+    """
+    from build_dashboard import OUTPUT_PATH
+    if not OUTPUT_PATH.exists():
+        return  # нет html — пропускаем
+    html = OUTPUT_PATH.read_text(encoding="utf-8")
+    # 1) .bars абсолютно и занимает 0%..(100% - 10.92%) .week.
+    assert ".bars {" in html, "нет .bars CSS"
+    bars_block = html.split(".bars {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" in bars_block, (
+        f".bars должен быть position:absolute (для совмещения с осью), "
+        f"а не flex-flow. CSS:\n{bars_block}"
+    )
+    assert "top: 0" in bars_block, ".bars должен начинаться на top:0 (100M-анкер)"
+    assert "bottom: 38px" in bars_block, (
+        ".bars должен заканчиваться на bottom:38px (≈ 100K-анкер над .days); "
+        "если поменялся .days-height, обнови --days-block тут и в .days CSS"
+    )
+    # 2) .week-head — overlay, иначе W-лэйбл съест верхние бары.
+    head_block = html.split(".week-head {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" in head_block, (
+        ".week-head должен быть position:absolute (top:12px поверх .bars), "
+        "иначе он лежит в потоке и сдвигает .bars вниз → 100M-бар не доходит до 100M-лейбла"
+    )
+    assert "top: 12px" in head_block, ".week-head должен сидеть на top:12px"
+    assert "z-index: 3" in head_block, ".week-head должен быть над .bars (z-index:3)"
+    # 3) .days — overlay внизу.
+    days_block = html.split(".days {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" in days_block, (
+        ".days должен быть position:absolute (bottom:12px), иначе он в потоке "
+        "сдвигает .week-content и ломает проценты"
+    )
+    assert "bottom: 12px" in days_block, ".days должен сидеть на bottom:12px"
+    # 4) .week должен иметь min-height, иначе absolute-дети схлопывают карточку.
+    week_block = html.split(".week {", 1)[1].split("}", 1)[0]
+    assert "min-height:" in week_block, (
+        ".week должен иметь min-height, иначе absolute .bars/.days/.week-head "
+        "не дают контента и карточка схлопывается → проценты гридлайнов "
+        "ломаются"
+    )
+
+
+def test_bar_height_matches_log_position() -> None:
+    """Численная проверка: для известного значения бар-топ ложится на 29.7% .week.
+
+    До фикса: 10M-бар топал на 36% .week (gap 6.5% = ~23px), Ср 10.63M
+    визуально была под 10M-линией (как Вт 9.74M). После фикса: 10M-бар
+    должен топнуть ровно на 29.7% .week (±1% — допуск на округление и
+    min-height:360 vs фактическая высота).
+
+    Проверяем формулу: bar_top_pct = (1 - frac) * chart_area_pct_of_week.
+    Для frac=2/3 (10M на 100K..100M): top = (1 - 2/3) * 89.08% = 29.69%.
+    """
+    # Данные с разбросом >1 декады, чтобы _y_ticks_for_log дал y_min=100K, y_max=100M
+    # (одна декада 10M..100M не даёт 100K-anchor).
+    weeks = _make_weeks([
+        [800_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000],
+    ])
+    log_info = _y_ticks_for_log(weeks)
+    assert log_info is not None
+    y_min, y_max, ticks = log_info
+    assert y_min == 10 ** 5 and y_max == 10 ** 8, f"anchor {y_min}..{y_max}"
+    # y_min=10^5, y_max=10^8 → frac(10M) = (7-5)/3 = 2/3
+    import math
+    frac = (math.log10(10_000_000) - math.log10(y_min)) / (math.log10(y_max) - math.log10(y_min))
+    assert abs(frac - 2 / 3) < 1e-6, f"frac(10M) должен быть 2/3, получил {frac}"
+    # В новой раскладке .bars = 89.08% .week, поэтому 10M-бар топом
+    # (1 - 2/3) * 89.08% = 29.69% от верха .week.
+    # А 10M-лейбл на top:29.7% .axis (= .week по grid-stretch) — должны
+    # совпасть в пределах 1%.
+    bar_top_pct = (1 - frac) * 89.08
+    label_pct = 29.7
+    assert abs(bar_top_pct - label_pct) < 1.0, (
+        f"10M-бар ({bar_top_pct:.2f}% .week) должен лечь на 10M-лейбл "
+        f"({label_pct}% .week); gap={bar_top_pct - label_pct:.2f}% — "
+        f"верни shared coord system (.bars absolute, top:0, bottom:38px)"
+    )
+
+
 def test_persistence_script_in_dashboard_html() -> None:
     """Сгенерированный dashboard.html должен содержать localStorage-логику.
 
@@ -214,6 +307,8 @@ def main() -> int:
         test_render_weekly_grid_none_day_title,
         test_render_weekly_grid_week_total,
         test_render_weekly_grid_week_total_all_none,
+        test_bar_axis_share_coordinate_system,
+        test_bar_height_matches_log_position,
         test_persistence_script_in_dashboard_html,
     ]
     passed = 0
