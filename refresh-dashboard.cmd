@@ -14,6 +14,8 @@ if not "%RC%"=="0" (
     echo [refresh-dashboard.cmd] build_dashboard.py exited with code %RC%
     echo Press any key to close...
     pause >nul
+) else (
+    start "" "%~dp0dashboard.html"
 )
 
 endlocal & exit /b %RC%
