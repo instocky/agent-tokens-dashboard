@@ -182,6 +182,53 @@ def compute_today(hourly: dict[tuple[date, int], int], now_msk: datetime) -> int
     return sum(hourly.get((today, h), 0) for h in range(now_msk.hour + 1))
 
 
+def compute_today_meta(con: sqlite3.Connection, now_msk: datetime) -> tuple[int, int, float]:
+    """Meta-метрики карточки «Сегодня» из `local_runtime_message_rows`.
+
+    Возвращает кортеж (sessions, user_messages, avg_requests_per_session)
+    за период [00:00 MSK сегодня, now_msk].
+
+    Контракт по составу:
+      - `sessions` — `COUNT(DISTINCT session_id)` среди строк, попавших в окно.
+        Сюда попадает любая сессия с ЛЮБЫМ событием (user/assistant/tool/None)
+        после полуночи MSK — то же определение, что и в token_usage-based
+        варианте ("сессия, в которой сегодня что-то происходило").
+      - `user_messages` — `COUNT(*) WHERE role='user'`. Только реальные вопросы
+        пользователя; assistant/tool/None-роли НЕ считаются. Это сознательно:
+        см. обсуждение 2026-08-04 — turn_id в token_usage неотличим от
+        internal-loop'ов, user-role в message_rows — единственный надёжный
+        сигнал "юзер что-то спросил".
+      - `avg` = user_messages / sessions (float). При sessions == 0 → 0.0.
+
+    Edge cases:
+      - Никаких строк в окне: (0, 0, 0.0).
+      - Все роли == None или != 'user': sessions>0, user_messages=0, avg=0.0.
+
+    Performance: full scan по таблице за сегодня. На текущих объёмах (<10K
+    строк) незаметно. Беклог: миграция `CREATE INDEX ... ON
+    local_runtime_message_rows(created_at_ms)` для будущего роста.
+    """
+    today = now_msk.date()
+    since_msk_midnight = datetime.combine(today, datetime.min.time(), tzinfo=MSK)
+    since_ts_ms = int(since_msk_midnight.timestamp() * 1000)
+
+    sessions_row = con.execute(
+        "SELECT COUNT(DISTINCT session_id) FROM local_runtime_message_rows "
+        "WHERE created_at_ms >= ?",
+        (since_ts_ms,),
+    ).fetchone()
+    user_msgs_row = con.execute(
+        "SELECT COUNT(*) FROM local_runtime_message_rows "
+        "WHERE role = 'user' AND created_at_ms >= ?",
+        (since_ts_ms,),
+    ).fetchone()
+
+    sessions = int(sessions_row[0]) if sessions_row else 0
+    user_messages = int(user_msgs_row[0]) if user_msgs_row else 0
+    avg = (user_messages / sessions) if sessions > 0 else 0.0
+    return sessions, user_messages, avg
+
+
 def current_window(now_msk: datetime) -> dict:
     """Какой 5h-слот активен сейчас (MSK).
 
@@ -503,6 +550,23 @@ def fmt_log_tick(n: int) -> str:
     return s
 
 
+def fmt_avg(value: float) -> str:
+    """Среднее число запросов на сессию: 3.5 → '3.5', 2.0 → '2', 4.04 → '4.0'.
+
+    Контракт (обсуждение 2026-08-04):
+      - Всегда один знак после запятой, КРОМЕ целых значений (2, 3, 5, …) —
+        для них '.0' визуальный шум. На 2.7 будет '2.7', на 2.0 будет '2'.
+      - Отрицательные не ожидаются (avg = user_msgs / sessions ≥ 0). Защита
+        для value < 0: ведём себя так же, как для value >= 0 (один знак, .0
+        убираем у целых). Это сознательно — fallback'и типа '0' или '—' тут
+        не нужны, вызывающий код знает контекст.
+      - Используется ТОЛЬКО в meta-строке карточки «Сегодня» для avg.
+    """
+    if value == int(value):
+        return str(int(value))
+    return f"{value:.1f}"
+
+
 def fmt_int(n: int | None) -> str:
     """Без K/M, для осей и лейблов."""
     return "—" if n is None else f"{n:,}".replace(",", " ")
@@ -799,6 +863,9 @@ def render_html(
     today_tokens: int,
     today_delta: str | None,
     today_sparkline: list[int],
+    today_sessions: int,
+    today_user_requests: int,
+    today_avg: float,
     window_total: int,
     window_delta: str | None,
     window_sparkline: list[int],
@@ -874,6 +941,16 @@ def render_html(
     else:
         peak_meta = "Пик: <strong>—</strong>"
     stream_total = sum(b.value for b in today_24h if b.value > 0)
+
+    # Today-meta: sessions, user-requests, avg. Один знак после запятой у avg,
+    # кроме целых (fmt_avg). Рендерится sub-line'ом между .kpi-value и .spark
+    # в карточке «Сегодня». Middle-dot (·, U+00B7) как разделитель, как в
+    # остальных meta-строках дашборда.
+    today_meta = (
+        f"{fmt_avg(today_avg)} req/sess · "
+        f"{today_sessions} sessions · "
+        f"{today_user_requests} user requests"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -961,6 +1038,17 @@ def render_html(
       margin-top: 18px;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
       font-size: 54px; line-height: 1; letter-spacing: -0.05em; font-weight: 800;
+    }}
+    /* Meta-строка под главной цифрой в карточке «Сегодня»: avg / sessions /
+       user requests. Мелкий, приглушённый, не отвлекает от value. Уменьшенный
+       margin-top относительно .kpi-value (8px вместо дефолтного) — визуально
+       «прилипает» к цифре, чтобы читалось как её подпись, а не отдельный блок.
+       Ниже остаётся место для .spark (38px) — meta не должна выталкивать
+       спарклайн за нижнюю границу .kpi (min-height:168px в .kpi). */
+    .kpi-meta {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px; line-height: 1.35; letter-spacing: 0.01em;
     }}
     .spark {{ height: 38px; margin-top: auto; padding-top: 12px; opacity: 0.9; }}
     .spark svg {{ width: 100%; height: 100%; display: block; }}
@@ -1280,6 +1368,7 @@ def render_html(
               {delta2}
             </div>
             <div class="kpi-value">{fmt_tokens(today_tokens)}</div>
+            <div class="kpi-meta">{today_meta}</div>
             <div class="spark">{spark2}</div>
           </article>
           <article class="panel kpi">
@@ -1436,6 +1525,15 @@ def main() -> int:
     log(f"[build] aggregated {len(hourly)} (date,hour) buckets")
 
     now_msk = datetime.now(MSK)
+
+    # Meta-метрики карточки «Сегодня» из message_rows. Открываем коннект
+    # отдельно, потому что aggregate_by_hour уже отработал и connection
+    # вышел из with-блока. Можно было держать коннект дольше, но разделение
+    # чтения token_usage и message_rows на два явных with — дешевле для
+    # читателя, чем один длинный блок.
+    with open_db(args.db) as con:
+        today_sessions, today_user_requests, today_avg = compute_today_meta(con, now_msk)
+
     current_hour_tokens = compute_current_hour(hourly, today)
     today_tokens = compute_today(hourly, now_msk)
     window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
@@ -1474,6 +1572,10 @@ def main() -> int:
 
     log(f"[build] current_hour ({today}, {now_msk.hour:02d}h) = {current_hour_tokens}")
     log(f"[build] today       (00:00–{now_msk.hour:02d}:59) = {today_tokens}")
+    log(
+        f"[build] today_meta  sessions={today_sessions}  "
+        f"user_requests={today_user_requests}  avg={today_avg}"
+    )
     log(f"[build] active_window = {window_label}, total = {window_total}")
     for h, v, d in window_entries:
         log(f"[build]   {d.isoformat()} {h:02d}:00-{h:02d}:59 = {v}")
@@ -1499,6 +1601,9 @@ def main() -> int:
         today_tokens=today_tokens,
         today_delta=fmt_delta_pct(today_tokens, prev_day),
         today_sparkline=spark_today,
+        today_sessions=today_sessions,
+        today_user_requests=today_user_requests,
+        today_avg=today_avg,
         window_total=window_total,
         window_delta=fmt_delta_pct(window_total, prev_window),
         window_sparkline=spark_window,

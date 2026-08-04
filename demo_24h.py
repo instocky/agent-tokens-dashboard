@@ -164,6 +164,13 @@ def main() -> int:
     today_24h_bars = compute_today_24h(hourly, now_msk)
     today_24h_peak_val = today_24h_peak(today_24h_bars)
 
+    # Демо-данные для today_meta (sub-line карточки «Сегодня»). Подобраны
+    # под реалистичный кейс 2026-08-04: 2 сессии, 7 user-сообщений, avg=3.5.
+    # В demo БД не открываем — synthetic pipeline.
+    today_sessions = 2
+    today_user_requests = 7
+    today_avg = 3.5
+
     html = render_html(
         current_hour_tokens=current_hour_tokens,
         current_hour_delta=fmt_delta_pct(current_hour_tokens, prev_hour),
@@ -171,6 +178,9 @@ def main() -> int:
         today_tokens=today_tokens,
         today_delta=fmt_delta_pct(today_tokens, prev_day),
         today_sparkline=spark_today,
+        today_sessions=today_sessions,
+        today_user_requests=today_user_requests,
+        today_avg=today_avg,
         window_total=window_total,
         window_delta=fmt_delta_pct(window_total, prev_window),
         window_sparkline=spark_window,
