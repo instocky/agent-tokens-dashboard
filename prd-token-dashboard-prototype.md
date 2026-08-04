@@ -13,6 +13,8 @@
 Изменения: 2026-08-03 — §7.2/§7.4 — добавлены 60s `<meta http-equiv="refresh">` для UI-freshness поверх 5-мин scheduler-build (two-tier refresh) и сегментированный переключатель linear/log шкалы weekly chart с приоритетом URL `?scale=` → `localStorage[tokenDashboardScale]` → 'log' default.
 Изменения: 2026-08-03 — §7.3 — зафиксировано визуальное направление concept-ops (тёмная тема, bento KPI, mono-цифры); 4 concept-направления в `concepts/` сохранены как reference.
 Изменения: 2026-08-03 — §7.4 — добавлена сумма недели (M) в шапку каждой W-карточки; суммируются только дни с данными (None исключаются).
+Изменения: 2026-08-04 — §6.6/§7.4/§8 FR-9 — добавлена карточка «Today · 24H Stream» (почасовая разбивка сегодняшнего дня, 24 бара 00..23, шкала интенсивности по GitHub contribution palette).
+Изменения: 2026-08-04 — §6.6/§7.4/§8 FR-9 — легенда карточки «Today · 24H Stream» приведена к GitHub-формату `Less [L1][L2][L3][L4] More` (4 квадрата палитры; `active`/`peak`/`future`/`NOW` убраны — состояния читаются напрямую из стилей баров).
 
 ## 2. Product Goal
 
@@ -147,6 +149,58 @@ days_left = 8 − isoweekday(today)         # Пн=7, Вт=6, …, Вс=1
 в `build_dashboard.py`. Изменяется в одном месте; не env, не CLI — это
 бизнес-лимит, а не runtime-параметр.
 
+### 6.6 Today · 24H Stream (почасовая разбивка)
+
+Карточка показывает расход токенов за каждый час текущего MSK-дня (00..23)
+в виде 24 баров. Цель — at-a-glance pattern recognition: когда был пик, на
+каком уровне текущий час, где провалы.
+
+**Состояния баров:**
+
+| `state`    | Когда                                                      | Визуал                                  |
+|------------|------------------------------------------------------------|-----------------------------------------|
+| `active`   | `h < now.hour` и `value > 0`                               | Зелёный по квартилю интенсивности (L1..L4) |
+| `peak`     | Топ-1 по `value` среди `h <= now.hour`                     | Яркий `#00d97e` + glow                  |
+| `current`  | `h == now.hour` (если не peak)                             | Тот же цвет по квартилю + outline 1px   |
+| `empty`    | `h < now.hour` и `value == 0`                              | 2px нейтральный floor                   |
+| `future`   | `h > now.hour`                                             | Пунктир, opacity 0.55                   |
+
+**Гамма интенсивности** — GitHub contribution palette, 4 уровня:
+
+| Уровень | Цвет     | Квартиль (среди ненулевых `active`+`current`) |
+|---------|----------|----------------------------------------------|
+| L1      | `#9be9a8`| ≤ Q1                                        |
+| L2      | `#40c463`| ≤ Q2                                        |
+| L3      | `#30a14e`| ≤ Q3                                        |
+| L4      | `#216e39`| > Q3                                        |
+| peak    | `#00d97e`| (вне шкалы)                                 |
+
+Если ненулевых часов меньше 4 — все они идут в L2 (избегаем визуального
+разрыва на 1-3 точках). Границы считаются по позициям в отсортированном
+массиве, inclusive: `q1 = sorted[n//4]`, `q2 = sorted[n//2]`,
+`q3 = sorted[(3n)//4]`. `value <= q1 → L1`, ..., `value > q3 → L4`.
+
+**NOW marker:** удалён (TL review, 2026-08-04). Текущий час визуально
+отличается тонким outline (.bar-24h.current), а позиция «сейчас» читается
+из meta-строки `Всего · Пик: HH:00` (running total до текущего часа
+включительно однозначно фиксирует, какой час последний). Бейдж `NOW` на
+24-барной карточке создавал визуальный шум и дублировал то, что уже
+видно из meta + outline.
+
+**Легенда:** формат GitHub contribution heatmap — `Less [L1][L2][L3][L4] More`,
+только шкала интенсивности. Состояния баров (`empty` / `future` / `peak` /
+`current`) читаются напрямую из их собственного стиля (пунктир / 2px floor /
+яркий accent / outline) и в легенде не перечисляются, чтобы не дублировать.
+
+**Метаданные карточки (правый верх):** `Всего: {fmt_tokens(sum)} · Пик: HH:00 ({fmt_tokens(peak_val)})`.
+Никаких переключателей шкалы (линейная/лог) — это распределение по часам,
+не накопительная метрика.
+
+**Чистая функция:** `compute_today_24h(hourly, now_msk) -> list[HourlyBar]`,
+где `HourlyBar = (hour, value, state, intensity)`. Тесты в
+`tests/test_24h_stream.py` (15 кейсов: state machine, peak selection,
+quartile distribution, current==peak boundary, empty/future semantics).
+
 ## 7. UX Requirements
 
 ### 7.1 Delivery Model
@@ -200,6 +254,9 @@ Dashboard должен сразу выглядеть как аккуратный
 - на текущем дне текущей недели — красная пунктирная линия с подписью
   «порог N.NNM» (weekly cap threshold, см. §6.5); рисуется как на
   линейной, так и на log шкале
+- карточка `Today · 24H Stream` — почасовая разбивка сегодняшнего дня
+  (24 бара 00..23, шкала интенсивности по GitHub-палитре,
+  мета «Всего · Пик: HH:00 (N.NNM)»); см. §6.6
 
 ### 7.5 Weekly Cap Threshold
 
@@ -278,6 +335,38 @@ weekly chart «потолок» сегодняшнего расхода (см. �
   (бизнес-лимит, не env/CLI)
 - чистая функция `compute_weekly_threshold(weekly_cap, today_spent, days_left)
   → int | None` обязана быть покрыта тестами в `tests/test_weekly_cap.py`
+
+### FR-9. Today · 24H Stream Card
+
+Скрипт должен вычислять и рендерить карточку `Today · 24H Stream` —
+почасовую разбивку сегодняшнего MSK-дня (24 бара, часы 00..23):
+
+- `compute_today_24h(hourly, now_msk) -> list[HourlyBar]` — чистая функция,
+  возвращает 24 `HourlyBar = (hour, value, state, intensity)` с уже
+  размеченными state и intensity; тесты в `tests/test_24h_stream.py`
+- state-машина: `active` / `current` / `peak` / `empty` / `future` —
+  правила см. §6.6
+- peak — топ-1 по `value` среди `h <= now.hour`; если `current_hour` оказался
+  максимумом — он же и `peak` (state=`peak`, intensity не используется —
+  рендер применяет `.bar-24h.peak` без `.intensity-*`)
+- intensity-квартили: 4 уровня GitHub-палитры (L1..L4) по позициям в
+  отсортированном массиве ненулевых значений; при N<4 все non-zero часы
+  идут в L2 (см. §6.6)
+- рендер включает 24 `.hour-cell` с `.bar-24h` (state + intensity) +
+  `.hour-label` (шрифт как у дней недели: Inter 12px, `var(--muted)`);
+  NOW-маркер не рисуется (TL review 2026-08-04, см. §6.6) — текущий час
+  отмечен тонким outline `.bar-24h.current`, а позиция «сейчас» однозначно
+  читается из meta-строки
+- легенда под заголовком — в формате GitHub contribution heatmap:
+  `Less [L1][L2][L3][L4] More` (4 квадрата палитры, лейблы `Less`/`More` по
+  краям); `active` / `peak` / `future` / `current` в легенде не перечисляются —
+  эти состояния читаются напрямую из стилей баров, дублировать в легенде
+  не нужно
+- meta в правом верхе карточки: `Всего: {fmt_tokens(total)} · Пик: HH:00 ({fmt_tokens(peak)})`
+- чистая функция `compute_today_24h` обязана быть покрыта тестами
+  в `tests/test_24h_stream.py` (≥ 10 кейсов: state machine на границах,
+  peak selection, current==peak, quartile distribution, empty/future
+  semantics, intensity collapse при N<4)
 
 ## 9. Non-Functional Requirements
 

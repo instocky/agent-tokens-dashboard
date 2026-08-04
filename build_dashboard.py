@@ -56,6 +56,24 @@ WEEKDAY_LABELS: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб
 # на завтра (формула зависит от today_spent и days_left, оба обновляются).
 WEEKLY_CAP_TOKENS: int = 75_000_000
 
+# Гамма интенсивности для карточки «TODAY · 24H STREAM» — GitHub contribution
+# palette (https://github.com/Readme-Stats). L0 — фон пустой/неактивной ячейки
+# (не используется как bar-color, но нужен для grid-фонов и empty-баров).
+# L1..L4 — четыре уровня по квартилям среди ненулевых ACTIVE-часов.
+# PEAK — отдельный акцент вне шкалы, выделен ярче и со свечением.
+GITHUB_PALETTE: dict[str, str] = {
+    "L0":     "#ebedf0",
+    "L1":     "#9be9a8",
+    "L2":     "#40c463",
+    "L3":     "#30a14e",
+    "L4":     "#216e39",
+    "PEAK":   "#00d97e",  # ярче максимального L4, чтобы визуально отделиться
+}
+# CSS-имена для каждого уровня (используются в разметке как .bar-24h.intensity-N
+# и .bar-24h.peak). Семантические state'ы (active/peak/current/future/empty)
+# добавляются как дополнительные классы — НЕ вместо intensity.
+_HOUR_STATE_LEVELS: tuple[str, ...] = ("L1", "L2", "L3", "L4")
+
 # ---- domain types ----------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -65,6 +83,25 @@ class Week:
     monday: date        # понедельник этой недели (MSK)
     days: list[int | None]   # 7 значений Пн..Вс, None = disabled/no data
     is_current: bool
+
+
+@dataclass(frozen=True)
+class HourlyBar:
+    """Один час карточки «TODAY · 24H STREAM».
+
+    `state` — семантический статус (что рисовать):
+      "active"  — h < now.hour и value > 0
+      "current" — h == now.hour (in-progress, всё ещё копит)
+      "peak"    — top-1 по value среди всех ACTIVE+CURRENT (включая current)
+      "future"  — h > now.hour (ещё не наступил)
+      "empty"   — h < now.hour и value == 0 (час прошёл, данных нет)
+    `intensity` — уровень палитры (L1..L4) для active/current/peak.
+      Для future/empty = None (рендер сам выбирает класс).
+    """
+    hour: int           # 0..23
+    value: int          # токены за этот час (>= 0)
+    state: str
+    intensity: str | None  # "L1" | "L2" | "L3" | "L4" | None
 
 
 # ---- CLI -------------------------------------------------------------------
@@ -257,6 +294,101 @@ def compute_weekly_threshold(
     # floor вниз: лучше показать чуть заниженный порог, чем подтолкнуть к
     # превышению. 10.71M → 10M, не 11M.
     return remaining // days_left
+
+
+def _intensity_level(value: int, sorted_active: list[int]) -> str:
+    """Уровень GitHub-палитры (L1..L4) по квартилю среди ненулевых ACTIVE-часов.
+
+    Семантика:
+      - sorted_active — ненулевые значения часов, отсортированные по возрастанию.
+      - L1 — нижний квартиль, L4 — верхний. Границы считаются по позиции в
+        отсортированном массиве (len // 4, len // 2, 3 * len // 4).
+      - Если sorted_active пуст или len < 4 — все значения попадают в L2
+        (визуально нейтральный «средний» уровень, не прыгает по шкале на
+        единственном баре — это не «победитель», а просто «есть данные»).
+      - Возвращает уровень палитры (одна из констант _HOUR_STATE_LEVELS).
+    """
+    n = len(sorted_active)
+    if n == 0 or value <= 0:
+        return "L2"  # fallback; для active'ов сюда не попадаем (value > 0)
+    if n < 4:
+        # Мало данных — не плодим квартили, всё в L2. Это сознательно:
+        # один бар с 5M и второй с 6M не должны иметь визуальный разрыв L1 vs L4.
+        return "L2"
+    # Границы квартилей: позиции, не значения. Ранжируем value через bisect.
+    import bisect
+    q1 = sorted_active[n // 4]
+    q2 = sorted_active[n // 2]
+    q3 = sorted_active[(3 * n) // 4]
+    if value <= q1:
+        return "L1"
+    if value <= q2:
+        return "L2"
+    if value <= q3:
+        return "L3"
+    return "L4"
+
+
+def compute_today_24h(
+    hourly: dict[tuple[date, int], int], now_msk: datetime
+) -> list[HourlyBar]:
+    """24-часовая разбивка сегодняшнего дня (MSK) для карточки «24H STREAM».
+
+    Возвращает список из 24 HourlyBar (hour=0..23) с уже размеченными state
+    и intensity. Порядок: по возрастанию hour.
+
+    Правила:
+      - peak — единственный час с максимальным value среди (h <= now.hour).
+        Если в эти часы value=0 везде — peak'а нет (state никогда не "peak").
+      - current — ровно h == now.hour (даже если value=0). Если current оказывается
+        одновременно максимумом — он же и peak (state="peak" + "current" в рендере
+        объединяются; см. _render_24h_stream).
+      - intensity назначается ТОЛЬКО ненулевым active/current/peak; для peak
+        intensity не используется (отдельный класс .bar-24h.peak).
+    """
+    today = now_msk.date()
+    now_h = now_msk.hour
+
+    # 1. Сырые значения по часам.
+    raw: list[tuple[int, int]] = [(h, hourly.get((today, h), 0)) for h in range(24)]
+
+    # 2. Находим peak: максимум среди h <= now_h. Если все нули — peak'а нет.
+    past = [(h, v) for h, v in raw if h <= now_h]
+    peak_hour: int | None = None
+    peak_val: int = 0
+    for h, v in past:
+        if v > peak_val:
+            peak_val = v
+            peak_hour = h
+
+    # 3. Сортируем ненулевые past-значения для квартилей.
+    sorted_active = sorted(v for _, v in past if v > 0)
+
+    bars: list[HourlyBar] = []
+    for h, v in raw:
+        if h > now_h:
+            state = "future"
+            intensity = None
+        elif h == now_h:
+            # current — помечаем peak'ом, если он же оказался максимумом
+            state = "peak" if peak_hour == h else "current"
+            intensity = _intensity_level(v, sorted_active) if v > 0 else None
+        elif v == 0:
+            state = "empty"
+            intensity = None
+        else:
+            state = "peak" if peak_hour == h else "active"
+            intensity = _intensity_level(v, sorted_active)
+        bars.append(HourlyBar(hour=h, value=v, state=state, intensity=intensity))
+    return bars
+
+
+def today_24h_peak(bars: list[HourlyBar]) -> tuple[int, int] | None:
+    """Удобный хелпер: (peak_hour, peak_value) или None, если peak'а нет."""
+    for b in bars:
+        if b.state == "peak":
+            return (b.hour, b.value)
+    return None
 
 
 def compute_sparkline_current(
@@ -587,6 +719,78 @@ def _render_weekly_grid(
     return "".join(out)
 
 
+def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
+    """HTML-разметка 24-часового стрима.
+
+    Структура:
+      <div class="chart-shell chart-shell--24h">
+        <div class="hours-24h">  — 24 ячейки .hour-cell с .bar-24h и .hour-label
+      </div>
+
+    Семантика классов бара:
+      .bar-24h.intensity-L1..L4  — палитра GitHub по квартилю
+      .bar-24h.peak              — топ-1 час, яркий акцент
+      .bar-24h.current           — текущий час (in-progress, тонкий outline)
+      .bar-24h.future            — h > now.hour, пунктир
+      .bar-24h.empty             — h < now.hour, value=0, нейтральный 2px floor
+
+    height: для active/current/peak — % от max в этих часах (тот же подход, что
+    в _bar_height_pct, но без log-варианта — здесь фиксированная линейная шкала:
+    max всех past-часов = 100%). Для empty/future — 0% (рендерится min-height).
+    """
+    # Max среди прошлых/текущих часов (= потолок шкалы). Если все нули — 1,
+    # чтобы не делить на 0; пустые бары всё равно рендерятся как min-height.
+    past_values = [b.value for b in bars if b.state in ("active", "current", "peak")]
+    scale_max = max(past_values) if past_values else 1
+
+    def _pct(v: int) -> float:
+        if v <= 0 or scale_max <= 0:
+            return 0.0
+        return max(2.0, min(100.0, (v / scale_max) * 100))
+
+    cells: list[str] = []
+    for b in bars:
+        # Класс бара: комбинируем state и (если есть) intensity.
+        if b.state == "peak":
+            cls = "bar-24h peak"
+            height_pct = _pct(b.value)
+        elif b.state == "current":
+            cls = "bar-24h current"
+            if b.intensity:
+                cls += f" intensity-{b.intensity}"
+            height_pct = _pct(b.value)
+        elif b.state == "active":
+            cls = f"bar-24h active intensity-{b.intensity or 'L2'}"
+            height_pct = _pct(b.value)
+        elif b.state == "future":
+            cls = "bar-24h future"
+            height_pct = 0.0
+        else:  # "empty"
+            cls = "bar-24h empty"
+            height_pct = 0.0
+
+        title = f"{b.hour:02d}:00–{b.hour:02d}:59: {fmt_int(b.value) if b.value else 'нет данных'}"
+        label_cls = "hour-label" + (" hour-label--future" if b.state == "future" else "")
+        cells.append(
+            f'<div class="hour-cell" data-hour="{b.hour}">'
+            f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
+            f'<span class="{label_cls}">{b.hour:02d}</span>'
+            f"</div>"
+        )
+
+    # Без NOW-маркера (по TL review, 2026-08-04): визуальный шум на широкой
+    # карточке 24-баров, «сейчас» и так понятно из meta-строки карточки
+    # (`Всего · Пик: HH:00 (N.NNM)` — running total до текущего часа включительно
+    # однозначно фиксирует позицию «now» в дня). Текущий час визуально
+    # отличается тонким outline (.bar-24h.current) — этого достаточно.
+
+    return (
+        f'<div class="chart-shell chart-shell--24h">'
+        f'<div class="hours-24h">{"".join(cells)}</div>'
+        f"</div>"
+    )
+
+
 def render_html(
     *,
     current_hour_tokens: int,
@@ -604,8 +808,17 @@ def render_html(
     y_max: int,
     log_info: tuple[float, float, list[int]] | None,
     weekly_threshold: int | None,
+    today_24h: list[HourlyBar],
+    today_24h_peak: tuple[int, int] | None,
+    now_msk: datetime | None = None,
 ) -> str:
-    now_msk = datetime.now(MSK)
+    # Параметр `now_msk` опциональный — если не передан, берём реальное время.
+    # Используется ТОЛЬКО для заголовка/meta-строк («обновлено», «сегодня»).
+    # Логика отображения баров и NOW-маркера зависит от переданного
+    # today_24h (который считается с явным now_msk в main), а не от этого
+    # параметра — иначе в demo/test заголовок мог бы расходиться с барами.
+    if now_msk is None:
+        now_msk = datetime.now(MSK)
     today_label = now_msk.strftime("%Y-%m-%d %H:%M MSK")
     today_date = today_label[:10]
     current_week_label = weeks[-1].label if weeks else "—"
@@ -650,6 +863,17 @@ def render_html(
         )
     else:
         log_meta_range = "—"
+
+    # 24h stream meta: пик + текущий час (для лейбла "сейчас").
+    if today_24h_peak is not None:
+        peak_h, peak_v = today_24h_peak
+        peak_meta = (
+            f"Пик: <strong>{peak_h:02d}:00</strong> "
+            f"({fmt_tokens(peak_v)})"
+        )
+    else:
+        peak_meta = "Пик: <strong>—</strong>"
+    stream_total = sum(b.value for b in today_24h if b.value > 0)
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -741,6 +965,11 @@ def render_html(
     .spark {{ height: 38px; margin-top: auto; padding-top: 12px; opacity: 0.9; }}
     .spark svg {{ width: 100%; height: 100%; display: block; }}
     .chart-panel {{ padding: 24px; }}
+    /* Нижний отступ chart-секций такой же, как у .hero (18px) — чтобы
+       gap между weekly и 24H совпадал с gap между hero и weekly.
+       :not(:last-child) чтобы не дублировать shell margin-bottom у
+       последней секции (там и так 36px от .shell). */
+    .chart-panel:not(:last-child) {{ margin-bottom: 18px; }}
     .eyebrow {{
       margin: 0 0 10px; color: var(--muted);
       font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em;
@@ -911,6 +1140,92 @@ def render_html(
       margin: 0; padding-top: 10px; border-top: 1px solid var(--history-2);
       color: var(--muted); font-size: 12px; text-align: center;
     }}
+    /* ===== Today · 24H Stream card =====
+       Наследует .panel.chart-panel (border-radius, фон, padding) и .chart-head
+       (eyebrow + title + meta). Своё: 24-колоночный грид, бары прижаты к низу,
+       подписи часов под барами. */
+    .chart-shell--24h {{
+      position: relative;
+      padding: 20px 18px 12px;
+    }}
+    .hours-24h {{
+      display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px;
+    }}
+    .hour-cell {{
+      /* Каждая из 24 ячеек. Flex-column: бар (flex:1, растёт вверх) + лейбл
+         (auto, по высоте строки). Лейбл в normal flow, не absolute, поэтому
+         не торчит за пределы chart-shell и не прилипает к нижней рамке.
+         Совпадает с .days в weekly chart: цвет и шрифт — var(--muted) Inter 12px,
+         центрированы, идут одной строкой под барами. */
+      display: flex; flex-direction: column; justify-content: flex-end;
+      gap: 6px; min-height: 152px;
+    }}
+    .bar-24h {{
+      width: 100%; flex: 0 1 auto; align-self: end;
+      border-radius: 6px 6px 2px 2px; min-height: 2px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
+      transition: filter 0.15s ease;
+    }}
+    .bar-24h:hover {{ filter: brightness(1.18); }}
+    /* GitHub intensity scale (4 уровня по квартилям) */
+    .bar-24h.intensity-L1 {{ background: #9be9a8; }}
+    .bar-24h.intensity-L2 {{ background: #40c463; }}
+    .bar-24h.intensity-L3 {{ background: #30a14e; }}
+    .bar-24h.intensity-L4 {{ background: #216e39; }}
+    /* Peak — ярче максимального L4, со свечением. Всегда идёт БЕЗ intensity-*,
+       чтобы фон шёл от .peak, а не перебивался квартильным классом. */
+    .bar-24h.peak {{
+      background: #00d97e;
+      box-shadow: 0 0 12px rgba(0, 217, 126, 0.45),
+                  inset 0 1px 0 rgba(255,255,255,0.25);
+    }}
+    /* Current hour (h == now.hour): та же заливка по intensity, но с тонким
+       контуром сверху, чтобы было видно «этот час ещё копит». */
+    .bar-24h.current {{
+      outline: 1px solid rgba(255,255,255,0.55);
+      outline-offset: -1px;
+    }}
+    /* Future (h > now.hour): пунктир, opacity 0.55. min-height:6px даёт
+       видимую "ячейку-заглушку", чтобы было ясно "здесь скоро появятся
+       данные". */
+    .bar-24h.future {{
+      height: 6px !important;
+      background: transparent;
+      border: 1px dashed rgba(255,255,255,0.18);
+      box-shadow: none; opacity: 0.55;
+    }}
+    /* Empty (h < now.hour, value=0): 2px нейтральный floor, как .bar.future в
+       weekly. Маркирует "час прошёл, данных нет". */
+    .bar-24h.empty {{
+      background: rgba(255,255,255,0.06);
+      box-shadow: none;
+    }}
+    .hour-label {{
+      /* Как .days в weekly chart: var(--muted), Inter 12px, центрированы.
+         flex:none — занимает ровно свою высоту, не растягивается. */
+      flex: none; text-align: center;
+      color: var(--muted);
+      font-size: 12px; line-height: 1;
+    }}
+    .hour-label--future {{ opacity: 0.4; }}
+    /* NOW-маркер удалён (TL review, 2026-08-04): на широкой карточке 24-баров
+       бейдж "NOW" поверх текущего часа дублирует то, что и так читается из
+       meta-строки ("Всего · Пик"). Текущий час по-прежнему визуально
+       выделяется тонким outline (.bar-24h.current) — этого достаточно. */
+    /* Легенда интенсивности (GitHub-формат "Less .... More"): 4 квадрата L1..L4
+       с лейблами "Less" / "More" по краям. Замена прежней "active / peak / future"
+       — состояния читаются из самой карточки (empty/future — пунктир/2px floor,
+       peak — отдельный яркий accent, current — outline). */
+    .swatch-24h {{
+      display: inline-block; width: 12px; height: 12px;
+      border-radius: 3px; vertical-align: middle;
+    }}
+    .legend--intensity {{
+      display: inline-flex; align-items: center; gap: 6px;
+    }}
+    .legend--intensity > span {{
+      color: var(--muted); font-size: 12px; line-height: 1;
+    }}
     @media (max-width: 980px) {{
       .kpis, .weeks {{ grid-template-columns: 1fr; }}
       .chart-head, .hero-top {{ flex-direction: column; align-items: flex-start; }}
@@ -918,6 +1233,11 @@ def render_html(
       .axis {{ display: none; }}
       /* На узком лейауте подпись threshold'а прячем, линия остаётся. */
       .threshold-label {{ display: none; }}
+      /* 24-часовой грид на узком экране: 12 колонок × 2 ряда часов (если совсем
+         тесно — перестроить на 8×3). Для MVP оставляем 24×1 с уменьшенной
+         минимальной шириной через .hour-cell, чтобы грид схлопнулся до
+         горизонтальной прокрутки на совсем узких экранах. */
+      .hours-24h {{ grid-template-columns: repeat(24, minmax(14px, 1fr)); }}
     }}
   </style>
 </head>
@@ -1012,6 +1332,26 @@ def render_html(
           <div class="weeks">{log_grid}</div>
         </div>
       </div>
+    </section>
+    <section class="panel chart-panel chart-panel--24h">
+      <div class="chart-head">
+        <div>
+          <p class="eyebrow">Today · 24H Stream</p>
+          <h2 class="chart-title">Почасовая разбивка, {today_date}</h2>
+        </div>
+        <div class="chart-meta">
+          Всего: <strong>{fmt_tokens(stream_total)}</strong> · {peak_meta}
+        </div>
+      </div>
+      <div class="legend legend--intensity">
+        <span>Less</span>
+        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L1']}" title="L1 — нижний квартиль"></i>
+        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L2']}" title="L2 — Q2 / fallback при N&lt;4"></i>
+        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L3']}" title="L3 — Q3"></i>
+        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L4']}" title="L4 — верхний квартиль"></i>
+        <span>More</span>
+      </div>
+      {_render_24h_stream(today_24h, stream_total)}
     </section>
   </main>
   <script>
@@ -1143,6 +1483,15 @@ def main() -> int:
         )
         log(f"[build]   {w.label} ({'current' if w.is_current else 'past  '})  [{days_repr}]")
 
+    # 24h stream: 24 бара по часам сегодня (для новой карточки "Today · 24H Stream").
+    today_24h_bars = compute_today_24h(hourly, now_msk)
+    today_24h_peak_val = today_24h_peak(today_24h_bars)
+    if today_24h_peak_val is not None:
+        ph, pv = today_24h_peak_val
+        log(f"[build] today_24h peak = {ph:02d}:00 ({pv} tokens)")
+    else:
+        log(f"[build] today_24h peak = none (no past hours with data)")
+
     html = render_html(
         current_hour_tokens=current_hour_tokens,
         current_hour_delta=fmt_delta_pct(current_hour_tokens, prev_hour),
@@ -1159,6 +1508,8 @@ def main() -> int:
         y_max=y_max,
         log_info=log_info,
         weekly_threshold=weekly_threshold,
+        today_24h=today_24h_bars,
+        today_24h_peak=today_24h_peak_val,
     )
 
     if args.no_write:

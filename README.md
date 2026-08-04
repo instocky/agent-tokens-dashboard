@@ -15,6 +15,10 @@ Task Scheduler trigger.
 - Shows tokens used since midnight (running total for the current MSK date)
 - Shows tokens used in the **active 5-hour slot** (see "Active window" below)
   with per-hour breakdown
+- Shows a **Today · 24H Stream** breakdown: 24 hourly bars (00..23) for the
+  current MSK date, coloured by the GitHub contribution palette (4 intensity
+  levels by quartile, plus a bright peak highlight), with dashed placeholders
+  for future hours
 - Shows a 4-week grouped-bar comparison (Mon–Sun per week, oldest → current)
 - Marks future days and days with no logged rows as `disabled` (dashed), not as zero
 - Shows a **weekly cap threshold** on the current day: a red dashed line with
@@ -26,6 +30,29 @@ Task Scheduler trigger.
 **Metric:** `input_tokens + output_tokens`. `cache_read_tokens`,
 `cache_write_tokens`, `reasoning_tokens`, and `cost_usd` are intentionally
 excluded — they are not the "what got billed to the model" number.
+
+### Today · 24H Stream
+
+Hourly breakdown of the current MSK date, rendered as 24 bars (00..23).
+Designed for at-a-glance pattern recognition: when did the burn spike, is
+the current hour above/below the day's average, when does the agent go quiet.
+
+Visual model (borrowed from the GitHub contribution heatmap):
+
+| Bar state  | Look                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `active`   | Green by intensity quartile (L1 lightest → L4 darkest)            |
+| `peak`     | Bright `#00d97e` with a soft glow; the single top-1 hour          |
+| `current`  | Same intensity color, thin white outline (hour still accumulating) |
+| `empty`    | 2px neutral floor (hour passed, no logged rows)                    |
+| `future`   | Dashed placeholder, 55% opacity (hour hasn't started yet)         |
+
+The legend under the title uses the GitHub format: `Less [L1][L2][L3][L4] More`
+— only the intensity scale, since `empty` / `future` / `peak` / `current` are
+read directly off the bar styles. The meta line in the card head shows today's
+total and the peak hour/value (a `Пик: 13:00 (1.35M)` line is the unambiguous
+"where we are in the day" anchor). The card is purely a visualisation — no
+log/linear toggle, since "consumption by hour" is not an accumulating metric.
 
 ---
 
@@ -167,11 +194,16 @@ tests/                           # unit tests, no pytest — run each file direc
   test_windows.py                # 4 — slot boundaries (day/night, midnight wrap)
   test_log_scale.py              # 11 — linear/log, week-total, localStorage script
   test_weekly_cap.py             # 15 — compute_weekly_threshold + render
+  test_24h_stream.py             # 15 — compute_today_24h + intensity quartiles + state machine
 concepts/                        # design exploration v2 — 4 visual directions
                                  # (concept-ops chosen for production; others retained)
+demo_24h.py                      # synthetic-data renderer for the 24H card;
+                                 # outputs tmp/dashboard_demo.html with a fake
+                                 # "yesterday 14:00" dataset for visual review
 refresh-dashboard.cmd            # one-click Windows rebuild helper (Explorer / taskbar)
 prd-token-dashboard-prototype.md # spec (PRD)
 dashboard.html                   # generated output (gitignored, regenerated on run)
+tmp/                             # demo artefacts (gitignored)
 runtime-state.sqlite             # the agent's local DB (gitignored, 446MB on this box)
 ```
 
