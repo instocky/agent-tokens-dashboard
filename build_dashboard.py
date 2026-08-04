@@ -899,21 +899,9 @@ def render_html(
     else:
         window_time = f"{window_label}, сегодня"
 
-    # Sparklines: 3 цвета, как в concept-ops
-    spark1 = _render_sparkline(current_hour_sparkline, "var(--accent-2)")
-    spark2 = _render_sparkline(today_sparkline, "var(--accent)")
-    spark3 = _render_sparkline(window_sparkline, "#8ea3c7")
-
-    # Delta-бейджи: None → без бейджа; "−" (U+2212) → красный (delta--neg)
-    def _delta_html(d: str | None) -> str:
-        if d is None:
-            return ""
-        cls = "delta delta--neg" if d.startswith("−") else "delta"
-        return f'<div class="{cls}">{d}</div>'
-
-    delta1 = _delta_html(current_hour_delta)
-    delta2 = _delta_html(today_delta)
-    delta3 = _delta_html(window_delta)
+    # Sparklines больше не рендерятся в KPI-карточках (редизайн 2026-08-04).
+    # Параметры *_sparkline оставлены в сигнатуре render_html для обратной
+    # совместимости с demo_24h.py и тестами, но в HTML не подставляются.
 
     # Weekly chart — оба варианта (linear/log), видимость через data-scale на .chart-panel
     linear_grid = _render_weekly_grid(weeks, "linear", y_max, weekly_threshold)
@@ -941,16 +929,6 @@ def render_html(
     else:
         peak_meta = "Пик: <strong>—</strong>"
     stream_total = sum(b.value for b in today_24h if b.value > 0)
-
-    # Today-meta: sessions, user-requests, avg. Один знак после запятой у avg,
-    # кроме целых (fmt_avg). Рендерится sub-line'ом между .kpi-value и .spark
-    # в карточке «Сегодня». Middle-dot (·, U+00B7) как разделитель, как в
-    # остальных meta-строках дашборда.
-    today_meta = (
-        f"{fmt_avg(today_avg)} req/sess · "
-        f"{today_sessions} sessions · "
-        f"{today_user_requests} user requests"
-    )
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -1016,9 +994,10 @@ def render_html(
       background: rgba(255,255,255,0.02); color: #8ea3c7;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 12px;
     }}
-    .kpis {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }}
+    .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
     .kpi {{
       padding: 18px 18px 16px; min-height: 168px;
+      display: flex; flex-direction: column;
       background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0)), var(--panel-2);
     }}
     .kpi-head {{ display: flex; justify-content: space-between; align-items: start; gap: 10px; }}
@@ -1027,31 +1006,41 @@ def render_html(
       font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
     }}
     .kpi-time {{ margin-top: 6px; color: #96a0b5; font-size: 13px; line-height: 1.35; }}
-    .delta {{
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 56px; padding: 5px 10px; border-radius: 999px;
-      background: rgba(16, 185, 129, 0.14); color: #5ee9b5;
-      font-size: 12px; font-weight: 800;
-    }}
-    .delta--neg {{ background: rgba(239, 68, 68, 0.14); color: #fca5a5; }}
+    /* .kpi-value: прижат к низу карточки через margin-top:auto (родитель .kpi
+       — flex column). Спарклайны удалены из карточек 1-3, поэтому раньше
+       .spark давал визуальный низ; теперь его роль играет .kpi-value.
+       Карточка 4 использует .kpi-fraction с тем же приёмом. */
     .kpi-value {{
-      margin-top: 18px;
+      margin-top: auto;
+      padding-top: 24px;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
-      font-size: 54px; line-height: 1; letter-spacing: -0.05em; font-weight: 800;
+      font-size: 68px; line-height: 1; letter-spacing: -0.05em; font-weight: 800;
     }}
-    /* Meta-строка под главной цифрой в карточке «Сегодня»: avg / sessions /
-       user requests. Мелкий, приглушённый, не отвлекает от value. Уменьшенный
-       margin-top относительно .kpi-value (8px вместо дефолтного) — визуально
-       «прилипает» к цифре, чтобы читалось как её подпись, а не отдельный блок.
-       Ниже остаётся место для .spark (38px) — meta не должна выталкивать
-       спарклайн за нижнюю границу .kpi (min-height:168px в .kpi). */
-    .kpi-meta {{
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 12px; line-height: 1.35; letter-spacing: 0.01em;
+    /* Дробь в карточке «Активность» (4-я в ряду): big req/sess слева,
+       справа — вертикальный стек user_requests / sessions с разделителем.
+       Семантика: 4 = 12 user requests / 3 sessions. */
+    .kpi-fraction {{
+      display: flex; align-items: center; gap: 14px;
+      margin-top: auto;
+      padding-top: 24px;
     }}
-    .spark {{ height: 38px; margin-top: auto; padding-top: 12px; opacity: 0.9; }}
-    .spark svg {{ width: 100%; height: 100%; display: block; }}
+    .kpi-fraction__value {{
+      margin-top: 0;  /* отменяем .kpi-value margin-top:auto внутри флекс-контейнера */
+    }}
+    .kpi-fraction__stack {{
+      display: flex; flex-direction: column; align-items: stretch;
+      min-width: 56px;
+    }}
+    .kpi-fraction__num,
+    .kpi-fraction__den {{
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 22px; line-height: 1; font-weight: 700;
+      color: #e6ebf6;
+      padding: 2px 0;
+    }}
+    .kpi-fraction__divider {{
+      height: 1px; background: rgba(255,255,255,0.18); margin: 6px 0;
+    }}
     .chart-panel {{ padding: 24px; }}
     /* Нижний отступ chart-секций такой же, как у .hero (18px) — чтобы
        gap между weekly и 24H совпадал с gap между hero и weekly.
@@ -1354,10 +1343,8 @@ def render_html(
                 <div class="kpi-title">Текущий момент</div>
                 <div class="kpi-time">{cur_time}</div>
               </div>
-              {delta1}
             </div>
             <div class="kpi-value">{fmt_tokens(current_hour_tokens)}</div>
-            <div class="spark">{spark1}</div>
           </article>
           <article class="panel kpi">
             <div class="kpi-head">
@@ -1365,11 +1352,8 @@ def render_html(
                 <div class="kpi-title">Сегодня</div>
                 <div class="kpi-time">{today_time}</div>
               </div>
-              {delta2}
             </div>
             <div class="kpi-value">{fmt_tokens(today_tokens)}</div>
-            <div class="kpi-meta">{today_meta}</div>
-            <div class="spark">{spark2}</div>
           </article>
           <article class="panel kpi">
             <div class="kpi-head">
@@ -1377,10 +1361,24 @@ def render_html(
                 <div class="kpi-title">Рабочее время</div>
                 <div class="kpi-time">{window_time}</div>
               </div>
-              {delta3}
             </div>
             <div class="kpi-value">{fmt_tokens(window_total)}</div>
-            <div class="spark">{spark3}</div>
+          </article>
+          <article class="panel kpi">
+            <div class="kpi-head">
+              <div>
+                <div class="kpi-title">Активность</div>
+                <div class="kpi-time">{today_time}</div>
+              </div>
+            </div>
+            <div class="kpi-fraction">
+              <div class="kpi-value kpi-fraction__value">{fmt_avg(today_avg)}</div>
+              <div class="kpi-fraction__stack">
+                <span class="kpi-fraction__num">{today_sessions}</span>
+                <span class="kpi-fraction__divider"></span>
+                <span class="kpi-fraction__den">{today_user_requests}</span>
+              </div>
+            </div>
           </article>
         </section>
       </article>
