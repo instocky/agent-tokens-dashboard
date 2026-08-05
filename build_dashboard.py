@@ -989,7 +989,9 @@ def render_html(
       width: 8px; height: 8px; border-radius: 999px;
       background: var(--accent-2); box-shadow: 0 0 18px rgba(16,185,129,0.55);
     }}
-    h1 {{ margin: 0; font-size: clamp(34px, 5vw, 48px); line-height: 1.02; letter-spacing: -0.05em; }}
+    /* h1: удалён вместе с <h1>Расход токенов runtime</h1> в hero — его роль
+       взял <p class="eyebrow">Token Usage</p>. Если когда-то понадобится
+       большой заголовок страницы, вернуть вместе с <h1> в markup. */
     .tz-chip {{
       padding: 8px 14px; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
       background: rgba(255,255,255,0.02); color: #8ea3c7;
@@ -1066,15 +1068,28 @@ def render_html(
        :not(:last-child) чтобы не дублировать shell margin-bottom у
        последней секции (там и так 36px от .shell). */
     .chart-panel:not(:last-child) {{ margin-bottom: 18px; }}
+    /* .eyebrow — единственный «заголовок» карточки. margin-bottom:0 потому,
+       что под ним больше нет h2.chart-title (он удалён вместе с .chart-title):
+       нижний отступ до легенды уже задан в .chart-head {{ margin-bottom: 18px }}. */
     .eyebrow {{
-      margin: 0 0 10px; color: var(--muted);
+      margin: 0; color: var(--muted);
       font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em;
     }}
+    /* .eyebrow__date — параметр-инлайн внутри eyebrow (например, дата дня для
+       24h-карточки). Толщина +1 ступень от eyebrow (700→800), цвет +1 ступень
+       ярче var(--muted) — используем #e6ebf6, тот же акцент-цвет, что и
+       .kpi-pill strong. letter-spacing:0 — чтобы цифры даты не «расплывались»
+       на 0.18em, унаследованной от .eyebrow. */
+    .eyebrow__date {{
+      margin-left: 14px;
+      font-weight: 800;
+      color: #e6ebf6;
+      letter-spacing: 0;
+    }}
     .chart-head {{
-      display: flex; justify-content: space-between; align-items: end; gap: 16px;
+      display: flex; justify-content: space-between; align-items: center; gap: 16px;
       margin-bottom: 18px;
     }}
-    .chart-title {{ margin: 0; font-size: 34px; line-height: 0.98; letter-spacing: -0.04em; }}
     .chart-meta {{
       display: flex; align-items: center; gap: 18px; color: var(--muted); font-size: 14px;
       flex-wrap: wrap; justify-content: flex-end;
@@ -1367,7 +1382,7 @@ def render_html(
       <article class="panel hero-card">
         <div class="hero-top">
           <div>
-            <h1>Расход токенов runtime</h1>
+            <p class="eyebrow">Token Usage</p>
             <div class="hero-meta">
               <span class="dot-live"></span>
               <span>Обновление каждые 5 минут · Input + Output</span>
@@ -1427,18 +1442,13 @@ def render_html(
     </section>
     <section class="panel chart-panel" id="chart-scale" data-scale="log">
       <div class="chart-head">
-        <div>
-          <p class="eyebrow">Weekly Compare</p>
-          <h2 class="chart-title">Последние 4 недели, Пн–Вс</h2>
-        </div>
+        <p class="eyebrow">Weekly Compare</p>
         <div class="chart-meta">
           <span class="chart-meta__variant chart-meta__linear">
-            Шкала: 0 … {fmt_int(y_max)} токенов ·
-            Текущая неделя: <strong>{current_week_label}</strong>
+            Шкала: 0 … {fmt_int(y_max)} токенов
           </span>
           <span class="chart-meta__variant chart-meta__log">
-            Шкала: log, {log_meta_range} токенов ·
-            Текущая неделя: <strong>{current_week_label}</strong>
+            Шкала: log, {log_meta_range} токенов
           </span>
           <div class="scale-toggle" role="tablist" aria-label="Шкала weekly chart">
             <button type="button" class="scale-toggle__btn" data-scale="linear" role="tab">Линейная</button>
@@ -1464,10 +1474,7 @@ def render_html(
     </section>
     <section class="panel chart-panel chart-panel--24h">
       <div class="chart-head">
-        <div>
-          <p class="eyebrow">Today · 24H Stream</p>
-          <h2 class="chart-title">Почасовая разбивка, {today_date}</h2>
-        </div>
+        <p class="eyebrow">Today · 24H Stream <span class="eyebrow__date">{today_date}</span></p>
         <div class="chart-meta">
           Всего: <strong>{fmt_tokens(stream_total)}</strong> · {peak_meta}
         </div>
