@@ -1994,7 +1994,7 @@ def render_html(
             <p class="eyebrow">Today Token Usage</p>
           </div>
           {hero_pills}
-          <div class="tz-chip">Europe/Moscow (UTC+3)</div>
+          <div class="tz-chip">MSK (UTC+3)</div>
         </div>
         <section class="kpis">
           <article class="panel kpi">
