@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import MSK, compute_today_meta, fmt_avg  # noqa: E402
+from build_dashboard import MSK, compute_current_session, compute_today_meta, fmt_avg  # noqa: E402
 
 
 # ---- fixtures --------------------------------------------------------------
@@ -39,10 +39,11 @@ _TODAY_MIDNIGHT_MS = int(
 
 
 def _make_con() -> sqlite3.Connection:
-    """In-memory SQLite с минимальной схемой local_runtime_message_rows.
+    """In-memory SQLite с минимальной схемой local_runtime_message_rows
+    и local_runtime_token_usage.
 
     Схема — точная копия из production (только нужные колонки). Index
-    по created_at_ms НЕ создаём — тестируем именно full-scan поведение.
+    по created_at_ms / ts НЕ создаём — тестируем именно full-scan поведение.
     """
     con = sqlite3.connect(":memory:")
     con.execute(
@@ -56,6 +57,16 @@ def _make_con() -> sqlite3.Connection:
             created_at_ms INTEGER NOT NULL,
             data_json TEXT NOT NULL,
             UNIQUE(session_id, msg_id)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE local_runtime_token_usage (
+            ts INTEGER NOT NULL,
+            session_id TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL
         )
         """
     )
@@ -78,6 +89,23 @@ def _insert(
         "(session_id, msg_id, role, turn_id, created_at_ms, data_json) "
         "VALUES (?, ?, ?, NULL, ?, '{}')",
         (session_id, msg_id, role, created_at_ms),
+    )
+
+
+def _insert_tokens(
+    con: sqlite3.Connection,
+    *,
+    session_id: str,
+    ts_ms: int,
+    input_tokens: int,
+    output_tokens: int,
+) -> None:
+    """Хелпер для вставки одной записи token_usage."""
+    con.execute(
+        "INSERT INTO local_runtime_token_usage "
+        "(ts, session_id, input_tokens, output_tokens) "
+        "VALUES (?, ?, ?, ?)",
+        (ts_ms, session_id, input_tokens, output_tokens),
     )
 
 
@@ -251,6 +279,85 @@ def test_today_meta_window_end_is_open() -> None:
     assert user_msgs == 1
 
 
+# ---- compute_current_session ----------------------------------------------
+
+
+def test_current_session_empty_day() -> None:
+    """Нет строк за сегодня → (None, 0, 0)."""
+    con = _make_con()
+    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    assert sid is None
+    assert tokens == 0
+    assert requests == 0
+
+
+def test_current_session_picks_latest_event() -> None:
+    """Самый поздний created_at_ms определяет session_id (не COUNT, не SUM)."""
+    con = _make_con()
+    # s1 — старая, s2 — старая, s3 — самая свежая
+    _insert(con, session_id="s1", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 1000)
+    _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 5000)
+    _insert(con, session_id="s3", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 9000)
+    _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 7000)
+    sid, _, _ = compute_current_session(con, _FIXED_NOW)
+    assert sid == "s3"
+
+
+def test_current_session_tokens_sum_today() -> None:
+    """tokens = SUM(input+output) по token_usage для текущей сессии за сегодня."""
+    con = _make_con()
+    # s1 — старая
+    _insert(con, session_id="s1", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 1000)
+    _insert_tokens(con, session_id="s1", ts_ms=_TODAY_MIDNIGHT_MS + 2000,
+                   input_tokens=100, output_tokens=50)
+    # s2 — самая свежая
+    _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 9000)
+    _insert_tokens(con, session_id="s2", ts_ms=_TODAY_MIDNIGHT_MS + 9100,
+                   input_tokens=200, output_tokens=80)
+    # Вчерашний токен-Usage для s2 — НЕ должен попасть в сумму.
+    _insert_tokens(con, session_id="s2", ts_ms=_TODAY_MIDNIGHT_MS - 1000,
+                   input_tokens=999, output_tokens=999)
+    sid, tokens, _ = compute_current_session(con, _FIXED_NOW)
+    assert sid == "s2"
+    assert tokens == 200 + 80  # 280, не 280 + 1998
+
+
+def test_current_session_requests_count_user_only() -> None:
+    """requests = COUNT WHERE role='user' для текущей сессии (не total rows)."""
+    con = _make_con()
+    # Самая свежая сессия — s1
+    latest = _TODAY_MIDNIGHT_MS + 9000
+    _insert(con, session_id="s1", role="user", created_at_ms=latest)
+    _insert(con, session_id="s1", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 1000)
+    _insert(con, session_id="s1", role="assistant", created_at_ms=_TODAY_MIDNIGHT_MS + 2000)
+    _insert(con, session_id="s1", role=None, created_at_ms=_TODAY_MIDNIGHT_MS + 3000)
+    # Старая s2 с user — НЕ должна попасть.
+    _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 500)
+    sid, _, requests = compute_current_session(con, _FIXED_NOW)
+    assert sid == "s1"
+    assert requests == 2  # 2 user-сообщения в s1
+
+
+def test_current_session_no_token_rows_returns_zero() -> None:
+    """Сессия есть в message_rows, но в token_usage для неё 0 строк → (sid, 0, K)."""
+    con = _make_con()
+    _insert(con, session_id="s1", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 9000)
+    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    assert sid == "s1"
+    assert tokens == 0
+    assert requests == 1
+
+
+def test_current_session_boundary_excludes_yesterday_message() -> None:
+    """Самое позднее событие вчера — НЕ выбирается; sid=None за сегодня."""
+    con = _make_con()
+    _insert(con, session_id="s_old", role="user", created_at_ms=_TODAY_MIDNIGHT_MS - 1000)
+    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    assert sid is None
+    assert tokens == 0
+    assert requests == 0
+
+
 # ---- main ------------------------------------------------------------------
 
 
@@ -268,6 +375,13 @@ def main() -> int:
         test_today_meta_distinct_sessions,
         test_today_meta_boundary_excludes_yesterday,
         test_today_meta_window_end_is_open,
+        # compute_current_session
+        test_current_session_empty_day,
+        test_current_session_picks_latest_event,
+        test_current_session_tokens_sum_today,
+        test_current_session_requests_count_user_only,
+        test_current_session_no_token_rows_returns_zero,
+        test_current_session_boundary_excludes_yesterday_message,
     ]
     passed = 0
     for t in tests:

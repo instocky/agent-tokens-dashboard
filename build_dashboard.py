@@ -229,6 +229,64 @@ def compute_today_meta(con: sqlite3.Connection, now_msk: datetime) -> tuple[int,
     return sessions, user_messages, avg
 
 
+def compute_current_session(
+    con: sqlite3.Connection, now_msk: datetime
+) -> tuple[str | None, int, int]:
+    """Метрики самой свежей сессии за сегодня (для hero-pill "session").
+
+    Возвращает (session_id, tokens, user_requests) для сессии с самым поздним
+    событием в окне [00:00 MSK, now_msk]. Используется в pill'е формата
+    `actual(requests) / avg_per_session(avg_requests_per_session)`, чтобы
+    числитель и знаменатель были в одних единицах (per-session). Иначе
+    today_tokens / avg_tokens_per_session = today_sessions (тривиально = N сессий)
+    и pill всегда красный — бесполезный сигнал.
+
+    Логика:
+      1. Находим session_id с MAX(created_at_ms) за сегодня (LIMIT 1).
+      2. Суммируем input+output по token_usage для этой сессии за сегодня.
+      3. Считаем user-сообщения для этой сессии за сегодня.
+
+    Edge cases:
+      - Нет строк за сегодня → (None, 0, 0); рендер pill'а покажет "—".
+      - Самая свежая сессия есть, но в token_usage для неё 0 строк → (sid, 0, K).
+        Pill покажет actual=0 → level="none" (нейтральный), а не "ok" (0/avg).
+        Это сознательно: "ещё ничего не сожгли в текущей сессии" ≠ "зелёный".
+
+    Performance: 3 запроса, каждый full-scan за сегодня. На <10K строках
+    незаметно (<5 мс). Беклог — индекс по created_at_ms.
+    """
+    today = now_msk.date()
+    since_msk_midnight = datetime.combine(today, datetime.min.time(), tzinfo=MSK)
+    since_ts_ms = int(since_msk_midnight.timestamp() * 1000)
+
+    sid_row = con.execute(
+        "SELECT session_id FROM local_runtime_message_rows "
+        "WHERE created_at_ms >= ? "
+        "ORDER BY created_at_ms DESC LIMIT 1",
+        (since_ts_ms,),
+    ).fetchone()
+    if sid_row is None or sid_row[0] is None:
+        return None, 0, 0
+    session_id = str(sid_row[0])
+
+    tok_row = con.execute(
+        "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) "
+        "FROM local_runtime_token_usage "
+        "WHERE session_id = ? AND ts >= ?",
+        (session_id, since_ts_ms),
+    ).fetchone()
+    tokens = int(tok_row[0]) if tok_row else 0
+
+    req_row = con.execute(
+        "SELECT COUNT(*) FROM local_runtime_message_rows "
+        "WHERE session_id = ? AND role = 'user' AND created_at_ms >= ?",
+        (session_id, since_ts_ms),
+    ).fetchone()
+    user_requests = int(req_row[0]) if req_row else 0
+
+    return session_id, tokens, user_requests
+
+
 def current_window(now_msk: datetime) -> dict:
     """Какой 5h-слот активен сейчас (MSK).
 
@@ -586,6 +644,30 @@ def fmt_delta_pct(curr: int, prev: int | None) -> str | None:
     return f"−{abs(pct):.0f}%"
 
 
+def pill_level(actual: int | None, cap: int | None) -> str:
+    """Цветовой уровень для числителя hero-pill (actual / cap).
+
+    Контракт (обсуждение 2026-08-05, TL review):
+      - "ok"   — actual ≤ 80% от cap (зелёный).
+      - "warn" — 80% < actual ≤ 100% (оранжевый, порог приближается).
+      - "over" — actual > 100% (красный, превышение).
+      - "none" — actual/cap отсутствуют или cap <= 0 (нейтральный,
+                 рендерим числитель как обычный текст без подсветки).
+                 Возвращается "none" и при actual==0 (день ещё не начался):
+                 нечего подсвечивать, нейтральный цвет честнее зелёного.
+
+    Чистая функция: тестируется без моков, как и `compute_weekly_threshold`.
+    """
+    if actual is None or cap is None or cap <= 0 or actual <= 0:
+        return "none"
+    pct = actual / cap
+    if pct > 1.0:
+        return "over"
+    if pct > 0.8:
+        return "warn"
+    return "ok"
+
+
 def _bar_height_pct(value: int, scale: str, y_info) -> float:
     """Высота бара в % (2..100). 0 → 0 (рендерится как min-height floor)."""
     if value <= 0:
@@ -855,6 +937,91 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
     )
 
 
+def _render_hero_pill(
+    actual: int | None,
+    actual_paren: int | float | None,
+    cap: int | None,
+    cap_paren: int | float | None,
+    title: str,
+) -> str:
+    """Один pill формата `actual(act_paren) / cap(cap_paren)`.
+
+    Числитель подсвечивается через .hero-pill__actual--{ok|warn|over|none}
+    по результату pill_level(actual, cap). Знаменатель — нейтральный белый.
+    Скобочные суффиксы — вторичная метрика, отдельный класс, без подсветки.
+
+    None в actual / cap → рендерим "—" (как fmt_tokens для None), класс уровня
+    не добавляем (нейтральный цвет). paren=None → без скобок вообще.
+    """
+    level = pill_level(actual, cap)
+    actual_str = fmt_tokens(actual)
+    cap_str = fmt_tokens(cap) if cap is not None else "—"
+
+    actual_cls = "hero-pill__actual"
+    if level != "none":
+        actual_cls += f" hero-pill__actual--{level}"
+
+    actual_paren_str = (
+        f'<span class="hero-pill__paren">({fmt_avg(actual_paren) if isinstance(actual_paren, float) else actual_paren})</span>'
+        if actual_paren is not None
+        else ""
+    )
+    cap_paren_str = (
+        f'<span class="hero-pill__paren">({fmt_avg(cap_paren) if isinstance(cap_paren, float) else cap_paren})</span>'
+        if cap_paren is not None
+        else ""
+    )
+
+    return (
+        f'<span class="hero-pill" title="{title}">'
+        f'<span class="{actual_cls}">{actual_str}</span>'
+        f"{actual_paren_str}"
+        f'<span class="hero-pill__sep">/</span>'
+        f'<span class="hero-pill__cap">{cap_str}</span>'
+        f"{cap_paren_str}"
+        f"</span>"
+    )
+
+
+def _render_hero_pills(
+    *,
+    current_session_tokens: int | None,
+    current_session_requests: int,
+    avg_tokens_per_session: int | None,
+    today_avg: float,
+    today_tokens: int,
+    weekly_threshold: int | None,
+) -> str:
+    """Два pill'а в hero-полосе: session и day.
+
+    - session: current_session_tokens(requests) / avg_tokens_per_session(avg_requests).
+      Числитель — самая свежая сессия за сегодня (см. compute_current_session),
+      знаменатель — среднее по всем сессиям за сегодня. Per-session vs per-session,
+      так что ratio осмысленный (≈1 в норме).
+    - day:     today_tokens / weekly_threshold.
+      Знаменатель — рассчитанный потолок на сегодня (см. compute_weekly_threshold).
+
+    Pill с пустым знаменателем (нет данных за день / threshold=None / current_session
+    нет) рендерится как "—" со neutral-цветом, чтобы layout не «скакал» между билдами.
+    """
+    session_actual = current_session_tokens if current_session_tokens is not None else None
+    session_pill = _render_hero_pill(
+        actual=session_actual,
+        actual_paren=current_session_requests,
+        cap=avg_tokens_per_session,
+        cap_paren=today_avg,
+        title="Токены в текущей сессии (запросы) / среднее по сессиям (запросы/сессию)",
+    )
+    day_pill = _render_hero_pill(
+        actual=today_tokens,
+        actual_paren=None,
+        cap=weekly_threshold,
+        cap_paren=None,
+        title="Потрачено сегодня / рассчитанный потолок дня (weekly cap / days_left)",
+    )
+    return f'<div class="hero-pills">{session_pill}{day_pill}</div>'
+
+
 def render_html(
     *,
     current_hour_tokens: int,
@@ -878,6 +1045,8 @@ def render_html(
     weekly_threshold: int | None,
     today_24h: list[HourlyBar],
     today_24h_peak: tuple[int, int] | None,
+    current_session_tokens: int | None,
+    current_session_requests: int,
     now_msk: datetime | None = None,
 ) -> str:
     # Параметр `now_msk` опциональный — если не передан, берём реальное время.
@@ -894,7 +1063,8 @@ def render_html(
     # KPI time-labels
     cur_h = now_msk.hour
     cur_time = f"{cur_h:02d}:00–{cur_h:02d}:59, {today_date}"
-    today_time = f"00:00–{cur_h:02d}:59, {today_date}"
+    # today_time = f"00:00–{cur_h:02d}:59, {today_date}"
+    today_time = f"00:00–{cur_h:02d}:59"
     if window_wraps:
         window_time = f"{window_label}, вчера→сегодня"
     else:
@@ -930,6 +1100,18 @@ def render_html(
     else:
         peak_meta = "Пик: <strong>—</strong>"
     stream_total = sum(b.value for b in today_24h if b.value > 0)
+
+    # Hero pills: сводка по текущей сессии и по дневной капе. Данные уже есть в
+    # параметрах render_html (current_session_*, today_*, weekly_threshold) —
+    # отдельных полей не требуется.
+    hero_pills = _render_hero_pills(
+        current_session_tokens=current_session_tokens,
+        current_session_requests=current_session_requests,
+        avg_tokens_per_session=avg_tokens_per_session,
+        today_avg=today_avg,
+        today_tokens=today_tokens,
+        weekly_threshold=weekly_threshold,
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -997,6 +1179,37 @@ def render_html(
       background: rgba(255,255,255,0.02); color: #8ea3c7;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 12px;
     }}
+    /* ===== Hero Pills (header strip) =====
+       Промежуточная зона между hero-meta и tz-chip (раньше была пустой —
+       красная рамка в макете 2026-08-05). Два pill'а:
+         - "session": actual_tokens(requests) / avg_tokens_per_session(avg_requests).
+         - "day":     today_tokens / weekly_threshold.
+       Числитель (.hero-pill__actual) подсвечивается по pill_level (зелёный /
+       оранжевый / красный); знаменатель (.hero-pill__cap) — всегда нейтральный
+       белый, чтобы цвет числителя не «зашумлялся». Стиль крупнее, чем
+       .kpi-pill: больше padding, размер шрифта, акцентные border-radius. */
+    .hero-pills {{
+      display: flex; flex: 1 1 auto; justify-content: flex-end;
+      align-items: end; gap: 10px; flex-wrap: wrap;
+    }}
+    .hero-pill {{
+      display: inline-flex; align-items: baseline; gap: 6px;
+      padding: 8px 14px; border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 13px; line-height: 1.35;
+      white-space: nowrap;
+    }}
+    .hero-pill__actual {{
+      font-weight: 700; color: var(--ink);
+    }}
+    .hero-pill__actual--ok   {{ color: #10b981; }}  /* зелёный, ≤80% */
+    .hero-pill__actual--warn {{ color: #f59e0b; }}  /* оранжевый, 80-100% */
+    .hero-pill__actual--over {{ color: #ef4444; }}  /* красный, >100% */
+    .hero-pill__sep {{ color: var(--muted); font-weight: 400; }}
+    .hero-pill__cap {{ color: #e6ebf6; font-weight: 600; }}
+    .hero-pill__paren {{ color: #8ea3c7; font-weight: 500; font-size: 12px; }}
     .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
     .kpi {{
       padding: 18px 18px 16px; min-height: 168px;
@@ -1382,12 +1595,13 @@ def render_html(
       <article class="panel hero-card">
         <div class="hero-top">
           <div>
-            <p class="eyebrow">Token Usage</p>
+            <p class="eyebrow">Today Token Usage</p>
             <div class="hero-meta">
               <span class="dot-live"></span>
               <span>Обновление каждые 5 минут · Input + Output</span>
             </div>
           </div>
+          {hero_pills}
           <div class="tz-chip">Europe/Moscow (UTC+3)</div>
         </div>
         <section class="kpis">
@@ -1580,6 +1794,11 @@ def main() -> int:
     # читателя, чем один длинный блок.
     with open_db(args.db) as con:
         today_sessions, today_user_requests, today_avg = compute_today_meta(con, now_msk)
+        # Самая свежая сессия за сегодня — для hero-pill "session".
+        # None-первый элемент допустим (день только начался), см. compute_current_session.
+        _current_sid, current_session_tokens, current_session_requests = (
+            compute_current_session(con, now_msk)
+        )
 
     current_hour_tokens = compute_current_hour(hourly, today)
     today_tokens = compute_today(hourly, now_msk)
@@ -1633,6 +1852,10 @@ def main() -> int:
         f"user_requests={today_user_requests}  avg={today_avg}  "
         f"avg_tokens/session={avg_tokens_per_session}"
     )
+    log(
+        f"[build] current_session  sid={_current_sid}  "
+        f"tokens={current_session_tokens}  requests={current_session_requests}"
+    )
     log(f"[build] active_window = {window_label}, total = {window_total}")
     for h, v, d in window_entries:
         log(f"[build]   {d.isoformat()} {h:02d}:00-{h:02d}:59 = {v}")
@@ -1673,6 +1896,8 @@ def main() -> int:
         weekly_threshold=weekly_threshold,
         today_24h=today_24h_bars,
         today_24h_peak=today_24h_peak_val,
+        current_session_tokens=current_session_tokens,
+        current_session_requests=current_session_requests,
     )
 
     if args.no_write:
