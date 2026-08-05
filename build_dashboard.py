@@ -1151,7 +1151,16 @@ def render_html(
          дети не участвуют в auto-flow). */
       position: relative;
       padding: 0 12px 12px;  /* top padding уехал на top:12px у .week-head */
-      min-height: 360px;
+      aspect-ratio: 1 / 1;   /* карточка недели = квадрат: высота = ширине колонки грида.
+                                .weeks — grid-template-columns: repeat(4, 1fr) → ширина
+                                колонки ≈ (chart-shell-inner - 94px-axis - 18px-gap - 16px*3) / 4.
+                                На 1280px-viewport это ~259px (был min-height: 360px,
+                                теперь height=259px, ~28% короче). Все вертикальные
+                                позиции (.bars top:0/bottom:38px, .axis на 0/29.7/59.4/89.08%,
+                                threshold bottom:X%, threshold-label top:-10px) — в px или % от
+                                .week/.bars, поэтому shared coord system сохраняется
+                                (бар 10M топом = 10M-лейбл = 29.7% .week) и линия threshold
+                                остаётся на той же Y относительно "14.97M", что и раньше. */
       border-radius: 18px;
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
       border: 1px solid rgba(255,255,255,0.03);
@@ -1178,16 +1187,27 @@ def render_html(
       text-transform: none; letter-spacing: -0.01em;
     }}
     .week.current .week-total {{ color: var(--accent); }}
-    /* .bars — absolute, занимает ровно 0%..(100% - 10.92%) .week.
-       bottom:38px = 1px border-top + 10px padding-top + ~14px line-height
-                  + 12px .week padding-bottom + 1px буфер ≈ 38px.
-       Высота .bars = .week - 38 = ~322px при min-height:360px. Это та же
-       «видимая» высота, что была у 260px-.bars в старом лейауте + сверху
-       добавилось ~30px пространства для лейаута 100M. bar's height:X%
-       теперь = X% от 0%..89.08% .week, и 10M-бар (X=66.7%) топом
-       ровно на 29.7% .week = 10M-лейбл. */
+    /* .bars — absolute, занимает ровно 0%..(100% - 10.5%) .week.
+       bottom:10.5% (вместо 38px) — чтобы при квадратной карточке (aspect-ratio:1,
+       .week-height = .week-width ≈ 259px) shared coord system с осью не
+       разъезжалась: иначе .bars занимал бы 0..85.33% карточки, ось 1M (на 59.4%
+       .week) «уезжала» в .bars на 69.6% вместо 66.4%, и бар 872K (height:31.4%
+       .bars) визуально оказывался ВЫШЕ линии 1M, хотя по значению должен быть
+       ниже. 10.5% = 38/360 в исходном калибре (min-height:360px) — теперь
+       работает при любой высоте .week.
+
+       bottom:38px в старом лейауте калибровался на min-height:360px и означал:
+       1px border-top + 10px padding-top + ~14px line-height + 12px .week
+       padding-bottom + 1px буфер ≈ 38px. С .week-height = 259px (квадрат)
+       абсолютный 38px становится 14.67% карточки, и 100K-анкер (top:89.08%
+       .week) уезжает в .days-зону, а 1M/100K-бары — выше своих лейблов.
+
+       bar's height:X% теперь = X% от 0%..89.5% .week на любой высоте, и
+       10M-бар (X=66.7%) топом = 10M-лейбл (29.7% .week) ±округление.
+       Порог (bottom:X% .bar-cell) и threshold-label (top:-10px) пересчитываются
+       автоматически. */
     .bars {{
-      position: absolute; top: 0; left: 12px; right: 12px; bottom: 38px;
+      position: absolute; top: 0; left: 12px; right: 12px; bottom: 10.5%;
       display: flex; gap: 7px; z-index: 1;
     }}
     .bar-cell {{

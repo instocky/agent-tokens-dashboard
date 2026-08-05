@@ -207,9 +207,13 @@ def test_bar_axis_share_coordinate_system() -> None:
         f"а не flex-flow. CSS:\n{bars_block}"
     )
     assert "top: 0" in bars_block, ".bars должен начинаться на top:0 (100M-анкер)"
-    assert "bottom: 38px" in bars_block, (
-        ".bars должен заканчиваться на bottom:38px (≈ 100K-анкер над .days); "
-        "если поменялся .days-height, обнови --days-block тут и в .days CSS"
+    assert "bottom: 10.5%" in bars_block, (
+        ".bars должен заканчиваться на bottom:10.5% (≈ 100K-анкер над .days). "
+        "Раньше был bottom:38px — откалиброван под min-height:360px и ломал "
+        "shared coord system при квадратной карточке (aspect-ratio:1): "
+        "872K-бар оказывался выше 1M-линии. 10.5% = 38/360 в исходном калибре, "
+        "и теперь работает на любой высоте .week. "
+        "Если поменялся .days-height, обнови --days-block тут и в .days CSS"
     )
     # 2) .week-head — overlay, иначе W-лэйбл съест верхние бары.
     head_block = html.split(".week-head {", 1)[1].split("}", 1)[0]
@@ -226,12 +230,13 @@ def test_bar_axis_share_coordinate_system() -> None:
         "сдвигает .week-content и ломает проценты"
     )
     assert "bottom: 12px" in days_block, ".days должен сидеть на bottom:12px"
-    # 4) .week должен иметь min-height, иначе absolute-дети схлопывают карточку.
+    # 4) .week должен иметь aspect-ratio:1 (квадрат) или min-height, иначе
+    # absolute-дети схлопывают карточку → проценты гридлайнов ломаются.
     week_block = html.split(".week {", 1)[1].split("}", 1)[0]
-    assert "min-height:" in week_block, (
-        ".week должен иметь min-height, иначе absolute .bars/.days/.week-head "
-        "не дают контента и карточка схлопывается → проценты гридлайнов "
-        "ломаются"
+    assert ("aspect-ratio:" in week_block) or ("min-height:" in week_block), (
+        ".week должен иметь aspect-ratio:1 (квадрат) или min-height — иначе "
+        "absolute .bars/.days/.week-head не дают контента и карточка "
+        "схлопывается → проценты гридлайнов ломаются"
     )
 
 
