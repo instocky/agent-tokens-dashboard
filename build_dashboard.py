@@ -1499,7 +1499,7 @@ def render_html(
         var(--panel);
     }}
     .hero-top {{
-      display: flex; justify-content: space-between; align-items: end; gap: 20px;
+      display: flex; justify-content: space-between; align-items: center; gap: 20px;
       padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
     }}
     /* h1: удалён вместе с <h1>Расход токенов runtime</h1> в hero — его роль
