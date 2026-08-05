@@ -1736,6 +1736,29 @@ def render_html(
       display: inline-block; width: 10px; height: 10px; margin-right: 6px;
       border-radius: 999px; vertical-align: middle;
     }}
+    /* .week-cap-pill — компактная "таблетка" в одной линии со шкалой и тогглом
+       в .chart-meta. Заменил пояснительную легенду (TL review, 2026-08-05):
+       "W прошлые/current" читается из самих баров, threshold-инфо сворачивается
+       в одну пилюлю "Порог недели: 60.00M". Цвет strong = var(--ink) — тот же
+       белый, что у weekly-total (78.99M, 67.72M) и у threshold-линии/подписи
+       на текущей неделе, чтобы пилюля, пунктир и подпись "10.61M" читались
+       как одна семантическая группа. */
+    .week-cap-pill {{
+      display: inline-flex; align-items: center;
+      padding: 4px 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 11px; line-height: 1.4;
+      white-space: nowrap;
+    }}
+    .week-cap-pill strong {{
+      margin-left: 6px;
+      color: var(--ink);
+      font-weight: 700;
+    }}
     .chart-shell {{
       padding: 18px; border-radius: 22px;
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)), #141820;
@@ -1869,7 +1892,7 @@ def render_html(
        быть над баром. На узких экранах подпись прячется, линия остаётся. */
     .threshold {{
       position: absolute; left: -3px; right: -3px;
-      border-top: 2px dashed #fca5a5;
+      border-top: 2px dashed #f5f7fb;
       pointer-events: none; z-index: 2;
     }}
     .threshold-label {{
@@ -1877,7 +1900,7 @@ def render_html(
       margin-left: 6px; white-space: nowrap;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
       font-size: 10px; font-weight: 700;
-      color: #fca5a5; text-transform: none; letter-spacing: 0;
+      color: #f5f7fb; text-transform: none; letter-spacing: 0;
     }}
     .days {{
       /* Абсолютно внизу карточки, поверх .bars. bottom:12px = .week padding-bottom.
@@ -2071,6 +2094,7 @@ def render_html(
       <div class="chart-head">
         <p class="eyebrow">Weekly Compare</p>
         <div class="chart-meta">
+          <span class="week-cap-pill" title="Недельный лимит расхода токенов">Порог недели: <strong>{fmt_tokens(WEEKLY_CAP_TOKENS)}</strong></span>
           <span class="chart-meta__variant chart-meta__linear">
             Шкала: 0 … {fmt_int(y_max)} токенов
           </span>
@@ -2082,11 +2106,6 @@ def render_html(
             <button type="button" class="scale-toggle__btn is-active" data-scale="log" role="tab" aria-selected="true">Log</button>
           </div>
         </div>
-      </div>
-      <div class="legend">
-        <span><i class="dot" style="background:rgba(255,255,255,0.16)"></i>W прошлые · history</span>
-        <span><i class="dot" style="background:var(--accent)"></i>{current_week_label} · current</span>
-        <span><i class="dot" style="background:transparent;border-top:2px dashed #ef4444;height:0;width:14px;border-radius:0;vertical-align:middle"></i>порог недели ({fmt_int(WEEKLY_CAP_TOKENS)} токенов)</span>
       </div>
       <div class="chart-shell">
         <div class="plot chart-variant chart-variant--linear">
