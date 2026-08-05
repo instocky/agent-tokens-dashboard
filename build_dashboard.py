@@ -1506,9 +1506,9 @@ def render_html(
        взял <p class="eyebrow">Token Usage</p>. Если когда-то понадобится
        большой заголовок страницы, вернуть вместе с <h1> в markup. */
     .tz-chip {{
-      padding: 8px 14px; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
-      background: rgba(255,255,255,0.02); color: #8ea3c7;
-      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 12px;
+      padding: 8px 14px; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+      background: rgba(255,255,255,0.03); color: #8ea3c7;
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 13px; line-height: 1.35;
     }}
     /* ===== Hero Pills (header strip) =====
        Промежуточная зона между hero-top и tz-chip (раньше была пустой —
