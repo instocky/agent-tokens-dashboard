@@ -1037,8 +1037,16 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
 
         title = f"{b.hour:02d}:00–{b.hour:02d}:59: {fmt_int(b.value) if b.value else 'нет данных'}"
         label_cls = "hour-label" + (" hour-label--future" if b.state == "future" else "")
+        # Лейбл значения над peak-баром (TL, 2026-08-05): для остальных
+        # ячеек не рендерим — bar layout не сдвигается (absolute positioning
+        # относительно .hour-cell, top:5px).
+        peak_value_html = (
+            f'<span class="peak-value">{fmt_tokens(b.value)}</span>'
+            if b.state == "peak" else ""
+        )
         cells.append(
             f'<div class="hour-cell" data-hour="{b.hour}">'
+            f'{peak_value_html}'
             f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
             f'<span class="{label_cls}">{b.hour:02d}</span>'
             f"</div>"
@@ -1691,9 +1699,23 @@ def render_html(
          (auto, по высоте строки). Лейбл в normal flow, не absolute, поэтому
          не торчит за пределы chart-shell и не прилипает к нижней рамке.
          Совпадает с .days в weekly chart: цвет и шрифт — var(--muted) Inter 12px,
-         центрированы, идут одной строкой под барами. */
+         центрированы, идут одной строкой под барами.
+         position:relative — якорь для .peak-value (absolute сверху). */
+      position: relative;
       display: flex; flex-direction: column; justify-content: flex-end;
       gap: 6px; min-height: 152px;
+    }}
+    /* Token-count label над peak-баром (TL, 2026-08-05): показывает величину
+       пикового часа прямо в карточке, не уходя в meta-строку. 5px сверху
+       cell'а — пиковый бар упирается в верх (100% height), лейбл висит
+       над ним; для не-пиковых ячеек лейбл не рендерится вообще. */
+    .peak-value {{
+      position: absolute; top: 5px; left: 0; right: 0;
+      text-align: center;
+      color: var(--muted);
+      font: 600 11px/1 var(--font);
+      letter-spacing: 0.02em;
+      pointer-events: none;
     }}
     .bar-24h {{
       width: 100%; flex: 0 1 auto; align-self: end;
