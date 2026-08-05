@@ -1065,21 +1065,34 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
     )
 
 
-def _render_hero_pill(
+def _build_hero_pill_inner(
+    *,
     actual: int | None,
     actual_paren: int | float | None,
     cap: int | None,
     cap_paren: int | float | None,
-    title: str,
+    sep: str = "/",
+    paren_inline: bool = False,
 ) -> str:
-    """Один pill формата `actual(act_paren) / cap(cap_paren)`.
+    """Inner markup (дети) `.hero-pill` для трио actual · sep · cap.
 
-    Числитель подсвечивается через .hero-pill__actual--{ok|warn|over|none}
-    по результату pill_level(actual, cap). Знаменатель — нейтральный белый.
-    Скобочные суффиксы — вторичная метрика, отдельный класс, без подсветки.
+    Используется в двух местах:
+      - `_render_hero_pill` оборачивает результат в `<span class="hero-pill">`
+        (standalone day-pill).
+      - `_render_combined_session_pill` кладёт результат в `<span
+        class="hero-pill__ratio">` внутри большого combined pill'а.
 
-    None в actual / cap → рендерим "—" (как fmt_tokens для None), класс уровня
-    не добавляем (нейтральный цвет). paren=None → без скобок вообще.
+    Параметры:
+      - sep — разделитель между actual и cap. По умолчанию '/', для
+        combined-pill'а вызывающий код передаёт '•' (bullet — это ratio,
+        не деление).
+      - paren_inline — True → скобочный суффикс вложен ВНУТРЬ value-span'а,
+        без flex-gap между числом и скобками (плотный вид `273.8K(5)`).
+        False (default, standalone pill) → суффикс отдельным flex-child'ом,
+        6px gap от родительского `.hero-pill` даёт воздух `273.8K (5)`.
+
+    None в actual → fmt_tokens рендерит "—"; в cap — "—" + level="none"
+    (без цветового класса). paren=None → блок скобок не рендерится вообще.
     """
     level = pill_level(actual, cap)
     actual_str = fmt_tokens(actual)
@@ -1089,58 +1102,126 @@ def _render_hero_pill(
     if level != "none":
         actual_cls += f" hero-pill__actual--{level}"
 
-    actual_paren_str = (
-        f'<span class="hero-pill__paren">({fmt_avg(actual_paren) if isinstance(actual_paren, float) else actual_paren})</span>'
-        if actual_paren is not None
-        else ""
-    )
-    cap_paren_str = (
-        f'<span class="hero-pill__paren">({fmt_avg(cap_paren) if isinstance(cap_paren, float) else cap_paren})</span>'
-        if cap_paren is not None
-        else ""
-    )
+    def _value_group(value_str: str, value_cls: str, paren: int | float | None) -> str:
+        paren_html = ""
+        if paren is not None:
+            content = fmt_avg(paren) if isinstance(paren, float) else paren
+            paren_html = f'<span class="hero-pill__paren">({content})</span>'
+        if paren_inline and paren_html:
+            # Скобка ВНУТРИ value-span'а → flex-gap родителя не разделяет
+            # число и скобки, видим как `273.8K(5)`.
+            return f'<span class="{value_cls}">{value_str}{paren_html}</span>'
+        # Скобка отдельным flex-child'ом → 6px gap от `.hero-pill`,
+        # видим как `273.8K (5)`.
+        return f'<span class="{value_cls}">{value_str}</span>{paren_html}'
 
     return (
-        f'<span class="hero-pill" title="{title}">'
-        f'<span class="{actual_cls}">{actual_str}</span>'
-        f"{actual_paren_str}"
-        f'<span class="hero-pill__sep">/</span>'
-        f'<span class="hero-pill__cap">{cap_str}</span>'
-        f"{cap_paren_str}"
-        f"</span>"
+        _value_group(actual_str, actual_cls, actual_paren)
+        + f'<span class="hero-pill__sep">{sep}</span>'
+        + _value_group(cap_str, "hero-pill__cap", cap_paren)
     )
 
 
-def _render_session_context_pill(
-    title: str | None, duration_ms: int | None, path: str | None
+def _render_hero_pill(
+    actual: int | None,
+    actual_paren: int | float | None,
+    cap: int | None,
+    cap_paren: int | float | None,
+    title: str,
+    sep: str = "/",
+    paren_inline: bool = False,
 ) -> str:
-    """Pill «название проекта · длительность» в начале hero-полосы.
+    """Один pill формата `actual(act_paren) <sep> cap(cap_paren)`.
+
+    Standalone-обёртка над `_build_hero_pill_inner` — добавляет внешний
+    `<span class="hero-pill" title="...">`. Используется ТОЛЬКО для day-pill'а
+    (today_tokens / weekly_threshold). Session-pill переехал в combined
+    (`_render_combined_session_pill`), который вызывает inner напрямую.
+
+    Числитель подсвечивается через .hero-pill__actual--{ok|warn|over|none}
+    по результату pill_level(actual, cap). Знаменатель — нейтральный белый.
+    Скобочные суффиксы — вторичная метрика, отдельный класс, без подсветки.
+
+    None в actual / cap → рендерим "—" (как fmt_tokens для None), класс уровня
+    не добавляем (нейтральный цвет). paren=None → без скобок вообще.
+    """
+    inner = _build_hero_pill_inner(
+        actual=actual,
+        actual_paren=actual_paren,
+        cap=cap,
+        cap_paren=cap_paren,
+        sep=sep,
+        paren_inline=paren_inline,
+    )
+    return f'<span class="hero-pill" title="{title}">{inner}</span>'
+
+
+def _render_combined_session_pill(
+    *,
+    title: str | None,
+    duration_ms: int | None,
+    path: str | None,
+    actual: int | None,
+    actual_paren: int | float | None,
+    cap: int | None,
+    cap_paren: int | float | None,
+) -> str:
+    """Combined pill «project | duration | actual(act_p) • cap(cap_p)» слева в hero-полосе.
 
     Структура:
-      <span class="hero-pill hero-pill--context" title="<path>">
+      <span class="hero-pill hero-pill--combined" title="<path>\\n\\n<ratio-desc>">
         <span class="hero-pill__project">{title}</span>
-        <span class="hero-pill__duration">{duration}</span>
+        <span class="hero-pill__duration">{duration}</span>   <!-- border-left = `|` -->
+        <span class="hero-pill__ratio">                       <!-- border-left = `|` -->
+          <span class="hero-pill__actual …">…<span class="hero-pill__paren">(…)</span></span>
+          <span class="hero-pill__sep">•</span>
+          <span class="hero-pill__cap">…<span class="hero-pill__paren">(…)</span></span>
+        </span>
       </span>
 
     Семантика:
       - title — короткое имя проекта (последняя папка пути без NNNN_-префикса),
-        либо '—' если путь не определён.
+        либо '—' если путь не определён. html.escape обязателен (приходит из
+        workspaceDir, может содержать &, <, >, кавычки).
       - duration — fmt_duration(duration_ms), '—' если None.
       - path уходит в HTML title (tooltip) — на самом pill'е не показываем,
-        чтобы не раздувать. Если path=None, в tooltip кладём "путь не определён",
-        чтобы UI не выглядел сломанным.
+        чтобы не раздувать. Если path=None, в tooltip кладём "путь не определён".
+        Дополнительно вторым абзацем в tooltip — пояснение к ratio (сохранено
+        из старого standalone session-pill'а).
+      - ratio — вызов `_build_hero_pill_inner` с sep='•' и paren_inline=True.
+        • вместо / потому что actual/cap — это ratio (текущая vs средняя), а
+        не деление. paren_inline=True → скобки вложены внутрь value-span'ов,
+        видим как `273.8K(5) • 877.5K(5.7)` (плотный вид, без 6px-flex-gap
+        между числом и скобками).
 
-    html.escape на title и path — обязательно: title приходит из workspaceDir
-    (может содержать &, <, >, кавычки), path тоже. Без escape — XSS-вектор
-    внутри атрибута title и в тексте .hero-pill__project.
+    TL-фидбэк 2026-08-05: до этого context и session были двумя отдельными
+    pill'ами в hero-полосе и не влезали в medium-viewport. Объединили в один
+    pill — визуально «какая сессия + как давно открыта + расход» читается
+    одним блоком.
     """
     title_str = html.escape(title or "—")
     duration_str = fmt_duration(duration_ms)
-    path_tip = html.escape(path or "путь не определён")
+    ratio_desc = "Токены в текущей сессии (запросы) / среднее по сессиям (запросы/сессию)"
+    # Собираем tooltip одной строкой и escape'им один раз. quote=True — потому
+    # что tooltip кладётся в HTML-атрибут title="…", а кавычки в path (если
+    # есть) ломают атрибут. escape() по умолчанию не эскейпит ", поэтому
+    # включаем явно. Двойной escape (path + tooltip) дал бы &amp;quot; вместо
+    # &quot; — собираем сырые значения и эскейпим один раз.
+    tooltip_raw = f"{path or 'путь не определён'}\n\n{ratio_desc}"
+    tooltip_attr = html.escape(tooltip_raw, quote=True)
+    ratio_inner = _build_hero_pill_inner(
+        actual=actual,
+        actual_paren=actual_paren,
+        cap=cap,
+        cap_paren=cap_paren,
+        sep="•",
+        paren_inline=True,
+    )
     return (
-        f'<span class="hero-pill hero-pill--context" title="{path_tip}">'
+        f'<span class="hero-pill hero-pill--combined" title="{tooltip_attr}">'
         f'<span class="hero-pill__project">{title_str}</span>'
         f'<span class="hero-pill__duration">{duration_str}</span>'
+        f'<span class="hero-pill__ratio">{ratio_inner}</span>'
         f"</span>"
     )
 
@@ -1157,31 +1238,26 @@ def _render_hero_pills(
     today_tokens: int,
     weekly_threshold: int | None,
 ) -> str:
-    """Три pill'а в hero-полосе: context · session · day.
+    """Два pill'а в hero-полосе: combined(session+context) · day.
 
-    - context: «<title> · <duration>» с path в tooltip. Семантически другой
-      объект, чем session/day (не ratio, а метаданные сессии), поэтому
-      выделен отдельным pill'ом слева.
-    - session: current_session_tokens(requests) / avg_tokens_per_session(avg_requests).
-      Числитель — самая свежая сессия за сегодня (см. compute_current_session),
-      знаменатель — среднее по всем сессиям за сегодня. Per-session vs per-session,
-      так что ratio осмысленный (≈1 в норме).
-    - day:     today_tokens / weekly_threshold.
+    - combined (слева): «<project> | <duration> | <actual(act_p)> • <cap(cap_p)>».
+      Один pill вместо двух — context и session объединены 2026-08-05, чтобы
+      освободить горизонтальное место в hero-полосе (два pill'а не влезали на
+      medium-viewport). Bullet `•` вместо `/` — ratio, не деление.
+    - day (справа): today_tokens / weekly_threshold.
       Знаменатель — рассчитанный потолок на сегодня (см. compute_weekly_threshold).
 
     Pill с пустым знаменателем (нет данных за день / threshold=None / current_session
     нет) рендерится как "—" со neutral-цветом, чтобы layout не «скакал» между билдами.
     """
-    context_pill = _render_session_context_pill(
-        current_session_title, current_session_duration_ms, current_session_path
-    )
-    session_actual = current_session_tokens if current_session_tokens is not None else None
-    session_pill = _render_hero_pill(
-        actual=session_actual,
+    combined_pill = _render_combined_session_pill(
+        title=current_session_title,
+        duration_ms=current_session_duration_ms,
+        path=current_session_path,
+        actual=current_session_tokens,
         actual_paren=current_session_requests,
         cap=avg_tokens_per_session,
         cap_paren=today_avg,
-        title="Токены в текущей сессии (запросы) / среднее по сессиям (запросы/сессию)",
     )
     day_pill = _render_hero_pill(
         actual=today_tokens,
@@ -1190,7 +1266,7 @@ def _render_hero_pills(
         cap_paren=None,
         title="Потрачено сегодня / рассчитанный потолок дня (weekly cap / days_left)",
     )
-    return f'<div class="hero-pills">{context_pill}{session_pill}{day_pill}</div>'
+    return f'<div class="hero-pills">{combined_pill}{day_pill}</div>'
 
 
 def render_html(
@@ -1359,8 +1435,12 @@ def render_html(
     /* ===== Hero Pills (header strip) =====
        Промежуточная зона между hero-meta и tz-chip (раньше была пустой —
        красная рамка в макете 2026-08-05). Два pill'а:
-         - "session": actual_tokens(requests) / avg_tokens_per_session(avg_requests).
-         - "day":     today_tokens / weekly_threshold.
+         - "combined" (слева): project | duration | actual(req) • cap(avg_req).
+           Объединяет бывшие context+session pill'ы (TL-фидбэк 2026-08-05) — два
+           pill'а не влезали в hero-полосу на medium-viewport. Bullet `•` вместо
+           `/` потому что actual/cap — это ratio (текущая vs средняя), а не
+           деление.
+         - "day" (справа): today_tokens / weekly_threshold.
        Числитель (.hero-pill__actual) подсвечивается по pill_level (зелёный /
        оранжевый / красный); знаменатель (.hero-pill__cap) — всегда нейтральный
        белый, чтобы цвет числителя не «зашумлялся». Стиль крупнее, чем
@@ -1387,26 +1467,38 @@ def render_html(
     .hero-pill__sep {{ color: var(--muted); font-weight: 400; }}
     .hero-pill__cap {{ color: #e6ebf6; font-weight: 600; }}
     .hero-pill__paren {{ color: #8ea3c7; font-weight: 500; font-size: 12px; }}
-    /* Context pill (название проекта · длительность сессии). Семантически другой
-       объект, чем session/day (метаданные, а не ratio), поэтому отдельный pill.
-       .hero-pill уже даёт baseline (border, background, padding); здесь — только
-       layout и типографика внутри.
-       - gap:8px — расстояние между title и duration, чуть больше, чем у
-         baseline-pill'а (6px), чтобы визуально отделить «имя» от «метрики».
+    /* Combined pill (project | duration | actual(act_p) • cap(cap_p)).
+       Семантически: «что за проект + как давно открыта сессия + текущая сессия
+       vs средняя». Три группы через `|` (border-left на следующих группах):
+         - project  (var(--ink), bold 800, ellipsis >260px)
+         - duration (серый, font-size 12px, border-left = `|`)
+         - ratio    (.hero-pill__ratio wrapper, border-left = `|`, gap 6px внутри)
+       gap:8px между группами — чуть больше, чем у baseline-pill'а (6px), чтобы
+       визуально отделить «имя» от «метрики». align-items:center — duration и
+       ratio могут быть ниже project (font-size 12px) по baseline; центрирование
+       по высоте pill'а выравнивает их посередине.
        - .hero-pill__project — bold, var(--ink), ellipsis при переполнении.
          max-width:260px — рассчитано на 30-40 символов, на типичных именах
          папок ('college-publisher', 'agent-tokens-dashboard') влезает целиком,
          на аномально длинных — обрезается с многоточием.
        - .hero-pill__duration — серый, шрифт на 1px меньше, отделён вертикальной
          палочкой слева. Контраст с ярким .hero-pill__project даёт визуальный
-         «псевдо-ratio» без введения новой семантики. */
-    .hero-pill--context {{ gap: 8px; align-items: center; }}
+         «псевдо-ratio» без введения новой семантики.
+       - .hero-pill__ratio — внутренняя мини-полоса pill'а (actual • cap).
+         display:inline-flex + gap:6px — gap внутри ratio отличается от gap
+         между группами (8px у .hero-pill--combined), чтобы ratio читался
+         «плотнее». border-left + padding-left — даёт второй `|` после duration. */
+    .hero-pill--combined {{ gap: 8px; align-items: center; }}
     .hero-pill__project {{
       font-weight: 800; color: var(--ink);
       max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }}
     .hero-pill__duration {{
       color: #8ea3c7; font-weight: 600; font-size: 12px;
+      border-left: 1px solid rgba(255,255,255,0.14); padding-left: 8px;
+    }}
+    .hero-pill__ratio {{
+      display: inline-flex; align-items: baseline; gap: 6px;
       border-left: 1px solid rgba(255,255,255,0.14); padding-left: 8px;
     }}
     .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
