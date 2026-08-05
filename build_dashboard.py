@@ -1747,20 +1747,12 @@ def render_html(
        бейдж "NOW" поверх текущего часа дублирует то, что и так читается из
        meta-строки ("Всего · Пик"). Текущий час по-прежнему визуально
        выделяется тонким outline (.bar-24h.current) — этого достаточно. */
-    /* Легенда интенсивности (GitHub-формат "Less .... More"): 4 квадрата L1..L4
-       с лейблами "Less" / "More" по краям. Замена прежней "active / peak / future"
-       — состояния читаются из самой карточки (empty/future — пунктир/2px floor,
-       peak — отдельный яркий accent, current — outline). */
-    .swatch-24h {{
-      display: inline-block; width: 12px; height: 12px;
-      border-radius: 3px; vertical-align: middle;
-    }}
-    .legend--intensity {{
-      display: inline-flex; align-items: center; gap: 6px;
-    }}
-    .legend--intensity > span {{
-      color: var(--muted); font-size: 12px; line-height: 1;
-    }}
+    /* Легенда интенсивности "Less .... More" удалена (TL review, 2026-08-05):
+       дублирует то, что читается из самих баров — empty/future через пунктир/2px
+       floor, peak через отдельный яркий accent, current через outline, активные
+       часы через шкалу L1..L4 (GitHub-палитра) с прогрессией яркости от L1 к L4.
+       Палитра L1..L4+PEAK остаётся как семантика интенсивности, явный блок
+       "Less/More" + 4 swatch'а убран как шум. */
     @media (max-width: 980px) {{
       .kpis, .weeks {{ grid-template-columns: 1fr; }}
       .chart-head, .hero-top {{ flex-direction: column; align-items: flex-start; }}
@@ -1883,14 +1875,6 @@ def render_html(
         <div class="chart-meta">
           Всего: <strong>{fmt_tokens(stream_total)}</strong> · {peak_meta}
         </div>
-      </div>
-      <div class="legend legend--intensity">
-        <span>Less</span>
-        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L1']}" title="L1 — нижний квартиль"></i>
-        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L2']}" title="L2 — Q2 / fallback при N&lt;4"></i>
-        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L3']}" title="L3 — Q3"></i>
-        <i class="swatch-24h" style="background:{GITHUB_PALETTE['L4']}" title="L4 — верхний квартиль"></i>
-        <span>More</span>
       </div>
       {_render_24h_stream(today_24h, stream_total)}
     </section>
