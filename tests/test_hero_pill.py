@@ -278,12 +278,107 @@ def test_combined_pill_contains_project_duration_ratio_in_order() -> None:
         cap=877_500, cap_paren=5.7,
     )
     pos_project = html.index("agent-tokens-dashboard")
-    pos_duration = html.index("28min")
+    # fmt_duration(28*60*1000) → "28 min" (с пробелом, см. коммит
+    # `ref: add space duration`). Раньше тест искал "28min" — stale после
+    # рефактора формата, фикс в том же scope.
+    pos_duration = html.index("28 min")
     pos_actual = html.index("273.8K")
     pos_cap = html.index("877.5K")
     assert pos_project < pos_duration < pos_actual < pos_cap, (
         f"expected project<duration<actual<cap, got positions "
         f"{pos_project=}, {pos_duration=}, {pos_actual=}, {pos_cap=}"
+    )
+
+
+def test_combined_pill_session_title_prepends_with_sep_dot() -> None:
+    """session_record_title → ДО project, через разделитель • (свой класс sep-dot).
+
+    Семантически session title (имя ветки) и project (папка) — разные сущности,
+    2026-08-05: pill показывает оба через •. КРИТИЧНО: session идёт ПЕРЕД
+    project (пользователь хочет видеть «что делаю» слева от «где»).
+    """
+    html = _render_combined_session_pill(
+        title="agent-tokens-dashboard",
+        session_record_title="TB07 Idempotency Photos",
+        duration_ms=28 * 60 * 1000,
+        path="C:/x",
+        actual=273_800, actual_paren=5,
+        cap=877_500, cap_paren=5.7,
+    )
+    # session-block идёт ДО project.
+    pos_session = html.index("TB07 Idempotency Photos")
+    pos_project = html.index("agent-tokens-dashboard")
+    assert pos_session < pos_project, (
+        f"expected session<project, got positions {pos_session=}, {pos_project=}"
+    )
+    # Свой span с уникальным классом (НЕ .hero-pill__sep — это ratio-разделитель,
+    # у него другой контекст и стиль; .hero-pill__sep-dot — префиксный).
+    assert '<span class="hero-pill__session">TB07 Idempotency Photos</span>' in html
+    assert '<span class="hero-pill__sep-dot">•</span>' in html
+    # project остаётся в своём span'е.
+    assert '<span class="hero-pill__project">agent-tokens-dashboard</span>' in html
+
+
+def test_combined_pill_omits_session_block_when_none() -> None:
+    """session_record_title=None (default) → session+sep-dot блок НЕ рендерится.
+
+    Backward-compat: старые runtime не пишут title, тесты без record_json.title —
+    pill должен выглядеть как до 2026-08-05 (только project | duration | ratio),
+    без пустого «• project» в начале.
+    """
+    html = _render_combined_session_pill(
+        title="agent-tokens-dashboard",
+        # session_record_title не передаём → дефолт None
+        duration_ms=28 * 60 * 1000,
+        path="C:/x",
+        actual=273_800, actual_paren=5,
+        cap=877_500, cap_paren=5.7,
+    )
+    assert "hero-pill__session" not in html
+    assert "hero-pill__sep-dot" not in html
+    # project остаётся.
+    assert '<span class="hero-pill__project">agent-tokens-dashboard</span>' in html
+
+
+def test_combined_pill_session_title_escapes_html() -> None:
+    """XSS: session title экранируется, как и project (одна схема escape'а).
+
+    Защита от injection в <span class="hero-pill__session">…</span> — пользователь
+    может ввести title с <script>/&/"/кавычками, runtime не санитизирует.
+    """
+    html = _render_combined_session_pill(
+        title="agent-tokens-dashboard",
+        session_record_title="<script>alert(1)</script>",
+        duration_ms=60_000,
+        path="C:/x",
+        actual=100, actual_paren=1,
+        cap=200, cap_paren=2.0,
+    )
+    # Сырые символы НЕ должны появиться.
+    assert "<script>" not in html
+    # Экранированные — должны, ровно один раз (НЕ двойной escape).
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&amp;lt;script&amp;gt;" not in html
+
+
+def test_combined_pill_full_order_with_session() -> None:
+    """Полный порядок с session title: session < project < duration < actual < cap."""
+    html = _render_combined_session_pill(
+        title="agent-tokens-dashboard",
+        session_record_title="Refactor hero pill",
+        duration_ms=28 * 60 * 1000,
+        path="C:/x",
+        actual=273_800, actual_paren=5,
+        cap=877_500, cap_paren=5.7,
+    )
+    pos_session = html.index("Refactor hero pill")
+    pos_project = html.index("agent-tokens-dashboard")
+    pos_duration = html.index("28 min")
+    pos_actual = html.index("273.8K")
+    pos_cap = html.index("877.5K")
+    assert pos_session < pos_project < pos_duration < pos_actual < pos_cap, (
+        f"expected session<project<duration<actual<cap, got "
+        f"{pos_session=}, {pos_project=}, {pos_duration=}, {pos_actual=}, {pos_cap=}"
     )
 
 
@@ -454,6 +549,10 @@ def main() -> int:
         # _render_combined_session_pill
         test_combined_pill_has_combined_class,
         test_combined_pill_contains_project_duration_ratio_in_order,
+        test_combined_pill_session_title_prepends_with_sep_dot,
+        test_combined_pill_omits_session_block_when_none,
+        test_combined_pill_session_title_escapes_html,
+        test_combined_pill_full_order_with_session,
         test_combined_pill_uses_bullet_not_slash,
         test_combined_pill_paren_is_inline,
         test_combined_pill_uses_ratio_wrapper,

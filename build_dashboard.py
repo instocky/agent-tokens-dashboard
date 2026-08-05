@@ -81,6 +81,14 @@ _HOUR_STATE_LEVELS: tuple[str, ...] = ("L1", "L2", "L3", "L4")
 # inspect_session.py (2026-08-05): поле workspaceDir присутствует в record_json.
 _SESSION_RECORD_PATH_KEY = "workspaceDir"
 
+# Ключ в record_json для названия сессии (например, "TB07 Idempotency Photos").
+# Семантически ОТЛИЧАЕТСЯ от workspaceDir: title — это имя ветки/работы,
+# выставляемое пользователем при старте сессии (в UI runtime'а), а workspaceDir —
+# папка репозитория. На pill'е показываем оба через разделитель • (см. обсуждение
+# 2026-08-05 в review к session-pill'у: "если хочется title — добавь отдельным
+# элементом через •").
+_SESSION_RECORD_TITLE_KEY = "title"
+
 # ---- domain types ----------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -764,6 +772,54 @@ def _fetch_session_path(con: sqlite3.Connection, session_id: str) -> str | None:
     return str(path) if path else None
 
 
+def _fetch_session_title(con: sqlite3.Connection, session_id: str | None) -> str | None:
+    """Название сессии (ветки/работы) из record_json в local_runtime_sessions.
+
+    Семантически ОТЛИЧАЕТСЯ от `_fetch_session_path` (workspaceDir):
+      - workspaceDir = путь к репозиторию/папке ("C:/Projects/Python/0803_...").
+      - title = имя, которое пользователь дал сессии ("TB07 Idempotency Photos").
+
+    В record_json v2 поле title может быть:
+      - строкой (нормальный случай, приходит из UI runtime при старте сессии);
+      - пустой строкой (пользователь не задал имя) — трактуем как None, чтобы
+        на pill'е не висел пустой блок;
+      - отсутствовать (старые runtime, тесты без поля) — None.
+
+    Failure modes (все → None, без exceptions наружу — параллельно с
+    `_fetch_session_path`):
+      - session_id=None (compute_current_session вернул None) → None без
+        обращения к БД. Защищает от лишнего SELECT'а в случае пустого дня.
+      - Таблица local_runtime_sessions отсутствует → sqlite3.OperationalError → None.
+      - session_id не найден → fetchone() вернёт None.
+      - record_json битый / None → JSONDecodeError / TypeError → None.
+      - title пустой или не строка → None.
+
+    Безопасна для частого вызова: один SELECT, один json.loads, никаких
+    побочных эффектов.
+    """
+    if not session_id:
+        return None
+    try:
+        row = con.execute(
+            "SELECT record_json FROM local_runtime_sessions "
+            "WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        record = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    title = record.get(_SESSION_RECORD_TITLE_KEY)
+    if not isinstance(title, str):
+        return None
+    stripped = title.strip()
+    return stripped if stripped else None
+
+
 def pill_level(actual: int | None, cap: int | None) -> str:
     """Цветовой уровень для числителя hero-pill (actual / cap).
 
@@ -1159,6 +1215,7 @@ def _render_hero_pill(
 def _render_combined_session_pill(
     *,
     title: str | None,
+    session_record_title: str | None = None,
     duration_ms: int | None,
     path: str | None,
     actual: int | None,
@@ -1166,11 +1223,13 @@ def _render_combined_session_pill(
     cap: int | None,
     cap_paren: int | float | None,
 ) -> str:
-    """Combined pill «project | duration | actual(act_p) • cap(cap_p)» слева в hero-полосе.
+    """Combined pill «session_title • project | duration | actual(act_p) • cap(cap_p)» слева в hero-полосе.
 
     Структура:
       <span class="hero-pill hero-pill--combined" title="<path>\\n\\n<ratio-desc>">
-        <span class="hero-pill__project">{title}</span>
+        <span class="hero-pill__session">{session_record_title}</span>   <!-- опционально -->
+        <span class="hero-pill__sep-dot">•</span>                         <!-- опционально -->
+        <span class="hero-pill__project">{project_title}</span>
         <span class="hero-pill__duration">{duration}</span>   <!-- border-left = `|` -->
         <span class="hero-pill__ratio">                       <!-- border-left = `|` -->
           <span class="hero-pill__actual …">…<span class="hero-pill__paren">(…)</span></span>
@@ -1180,9 +1239,12 @@ def _render_combined_session_pill(
       </span>
 
     Семантика:
-      - title — короткое имя проекта (последняя папка пути без NNNN_-префикса),
-        либо '—' если путь не определён. html.escape обязателен (приходит из
-        workspaceDir, может содержать &, <, >, кавычки).
+      - session_record_title — имя ветки/работы (record_json.title,
+        "_fetch_session_title"), опционально. None/пусто → блок + разделитель
+        НЕ рендерятся, остаётся только project (старый fallback 2026-08-04).
+      - title (project) — короткое имя проекта (последняя папка пути без
+        NNNN_-префикса), либо '—' если путь не определён. html.escape обязателен
+        (приходит из workspaceDir, может содержать &, <, >, кавычки).
       - duration — fmt_duration(duration_ms), '—' если None.
       - path уходит в HTML title (tooltip) — на самом pill'е не показываем,
         чтобы не раздувать. Если path=None, в tooltip кладём "путь не определён".
@@ -1197,7 +1259,10 @@ def _render_combined_session_pill(
     TL-фидбэк 2026-08-05: до этого context и session были двумя отдельными
     pill'ами в hero-полосе и не влезали в medium-viewport. Объединили в один
     pill — визуально «какая сессия + как давно открыта + расход» читается
-    одним блоком.
+    одним блоком. Затем 2026-08-05 добавлен session_record_title (имя ветки) —
+    он семантически отличается от project (папка) и заслуживает отдельной
+    позиции. На типичной ширине viewport'а умещается; если нет — ellipsis
+    на обоих span'ах не даёт сломать layout.
     """
     title_str = html.escape(title or "—")
     duration_str = fmt_duration(duration_ms)
@@ -1217,8 +1282,22 @@ def _render_combined_session_pill(
         sep="•",
         paren_inline=True,
     )
+    # session_title — опциональная префиксная часть. Рендерим отдельным span'ом
+    # с собственным классом (стиль отличается от project, см. CSS), плюс
+    # отдельный sep-dot span между session и project (т.к. .hero-pill__sep
+    # внутри .hero-pill__ratio — это ratio-разделитель, у него свой контекст
+    # и цвет; во избежание коллизий и для независимой стилизации — новый класс).
+    if session_record_title:
+        session_title_str = html.escape(session_record_title)
+        session_block = (
+            f'<span class="hero-pill__session">{session_title_str}</span>'
+            f'<span class="hero-pill__sep-dot">•</span>'
+        )
+    else:
+        session_block = ""
     return (
         f'<span class="hero-pill hero-pill--combined" title="{tooltip_attr}">'
+        f"{session_block}"
         f'<span class="hero-pill__project">{title_str}</span>'
         f'<span class="hero-pill__duration">{duration_str}</span>'
         f'<span class="hero-pill__ratio">{ratio_inner}</span>'
@@ -1231,6 +1310,7 @@ def _render_hero_pills(
     current_session_tokens: int | None,
     current_session_requests: int,
     current_session_title: str | None,
+    current_session_record_title: str | None,
     current_session_duration_ms: int | None,
     current_session_path: str | None,
     avg_tokens_per_session: int | None,
@@ -1240,10 +1320,13 @@ def _render_hero_pills(
 ) -> str:
     """Два pill'а в hero-полосе: combined(session+context) · day.
 
-    - combined (слева): «<project> | <duration> | <actual(act_p)> • <cap(cap_p)>».
+    - combined (слева): «<session_title> • <project> | <duration> | <actual(act_p)> • <cap(cap_p)>».
       Один pill вместо двух — context и session объединены 2026-08-05, чтобы
       освободить горизонтальное место в hero-полосе (два pill'а не влезали на
       medium-viewport). Bullet `•` вместо `/` — ratio, не деление.
+      session_title (record_json.title) и project (workspaceDir) — РАЗНЫЕ сущности
+      (имя ветки vs имя папки), 2026-08-05 добавлены оба через разделитель •.
+      Если session_title=None — рендерится только project (старый fallback).
     - day (справа): today_tokens / weekly_threshold.
       Знаменатель — рассчитанный потолок на сегодня (см. compute_weekly_threshold).
 
@@ -1252,6 +1335,7 @@ def _render_hero_pills(
     """
     combined_pill = _render_combined_session_pill(
         title=current_session_title,
+        session_record_title=current_session_record_title,
         duration_ms=current_session_duration_ms,
         path=current_session_path,
         actual=current_session_tokens,
@@ -1295,6 +1379,7 @@ def render_html(
     current_session_tokens: int | None,
     current_session_requests: int,
     current_session_title: str | None = None,
+    current_session_record_title: str | None = None,
     current_session_duration_ms: int | None = None,
     current_session_path: str | None = None,
     now_msk: datetime | None = None,
@@ -1358,6 +1443,7 @@ def render_html(
         current_session_tokens=current_session_tokens,
         current_session_requests=current_session_requests,
         current_session_title=current_session_title,
+        current_session_record_title=current_session_record_title,
         current_session_duration_ms=current_session_duration_ms,
         current_session_path=current_session_path,
         avg_tokens_per_session=avg_tokens_per_session,
@@ -1489,6 +1575,21 @@ def render_html(
          между группами (8px у .hero-pill--combined), чтобы ratio читался
          «плотнее». border-left + padding-left — даёт второй `|` после duration. */
     .hero-pill--combined {{ gap: 8px; align-items: center; }}
+    /* .hero-pill__session — имя ветки/работы (record_json.title), 2026-08-05.
+       Семантически отличается от project (папка репозитория): первое — что
+       делаем, второе — где. Стиль — второстепенный (muted, шрифт 12px), чтобы
+       project оставался "главным именем" слева, а session — пояснением.
+       .hero-pill__sep-dot — разделитель • между session и project, отдельный
+       класс чтобы НЕ путать с .hero-pill__sep (это ratio-разделитель внутри
+       .hero-pill__ratio, у него своё оформление и контекст).
+       max-width: 220px — рассчитано на типичные имена веток ("TB07 Idempotency
+       Photos", "Fix dashboard peak label"); на аномально длинных — ellipsis,
+       layout не ломается. */
+    .hero-pill__session {{
+      color: #c7d0e2; font-weight: 600; font-size: 12px;
+      max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }}
+    .hero-pill__sep-dot {{ color: var(--muted); font-weight: 400; }}
     .hero-pill__project {{
       font-weight: 800; color: var(--ink);
       max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2099,6 +2200,10 @@ def main() -> int:
             current_session_path,
             current_session_duration_ms,
         ) = compute_current_session(con, now_msk)
+        # Название сессии (record_json.title) — отличается от project_title
+        # тем, что это имя ветки/работы, а не папка. Может отсутствовать у
+        # старых runtime или если пользователь не задал имя при старте.
+        current_session_record_title = _fetch_session_title(con, _current_sid)
     current_session_title = project_title_from_path(current_session_path)
 
     current_hour_tokens = compute_current_hour(hourly, today)
@@ -2156,7 +2261,8 @@ def main() -> int:
     log(
         f"[build] current_session  sid={_current_sid}  "
         f"tokens={current_session_tokens}  requests={current_session_requests}  "
-        f"path={current_session_path}  title={current_session_title}  "
+        f"path={current_session_path}  project={current_session_title}  "
+        f"session_title={current_session_record_title}  "
         f"duration={fmt_duration(current_session_duration_ms)}"
     )
     log(f"[build] active_window = {window_label}, total = {window_total}")
@@ -2202,6 +2308,7 @@ def main() -> int:
         current_session_tokens=current_session_tokens,
         current_session_requests=current_session_requests,
         current_session_title=current_session_title,
+        current_session_record_title=current_session_record_title,
         current_session_duration_ms=current_session_duration_ms,
         current_session_path=current_session_path,
     )
