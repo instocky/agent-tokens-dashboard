@@ -285,7 +285,7 @@ def test_today_meta_window_end_is_open() -> None:
 def test_current_session_empty_day() -> None:
     """Нет строк за сегодня → (None, 0, 0)."""
     con = _make_con()
-    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    sid, tokens, requests, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid is None
     assert tokens == 0
     assert requests == 0
@@ -299,7 +299,7 @@ def test_current_session_picks_latest_event() -> None:
     _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 5000)
     _insert(con, session_id="s3", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 9000)
     _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 7000)
-    sid, _, _ = compute_current_session(con, _FIXED_NOW)
+    sid, _, _, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid == "s3"
 
 
@@ -317,7 +317,7 @@ def test_current_session_tokens_sum_today() -> None:
     # Вчерашний токен-Usage для s2 — НЕ должен попасть в сумму.
     _insert_tokens(con, session_id="s2", ts_ms=_TODAY_MIDNIGHT_MS - 1000,
                    input_tokens=999, output_tokens=999)
-    sid, tokens, _ = compute_current_session(con, _FIXED_NOW)
+    sid, tokens, _, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid == "s2"
     assert tokens == 200 + 80  # 280, не 280 + 1998
 
@@ -333,7 +333,7 @@ def test_current_session_requests_count_user_only() -> None:
     _insert(con, session_id="s1", role=None, created_at_ms=_TODAY_MIDNIGHT_MS + 3000)
     # Старая s2 с user — НЕ должна попасть.
     _insert(con, session_id="s2", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 500)
-    sid, _, requests = compute_current_session(con, _FIXED_NOW)
+    sid, _, requests, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid == "s1"
     assert requests == 2  # 2 user-сообщения в s1
 
@@ -342,7 +342,7 @@ def test_current_session_no_token_rows_returns_zero() -> None:
     """Сессия есть в message_rows, но в token_usage для неё 0 строк → (sid, 0, K)."""
     con = _make_con()
     _insert(con, session_id="s1", role="user", created_at_ms=_TODAY_MIDNIGHT_MS + 9000)
-    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    sid, tokens, requests, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid == "s1"
     assert tokens == 0
     assert requests == 1
@@ -352,7 +352,7 @@ def test_current_session_boundary_excludes_yesterday_message() -> None:
     """Самое позднее событие вчера — НЕ выбирается; sid=None за сегодня."""
     con = _make_con()
     _insert(con, session_id="s_old", role="user", created_at_ms=_TODAY_MIDNIGHT_MS - 1000)
-    sid, tokens, requests = compute_current_session(con, _FIXED_NOW)
+    sid, tokens, requests, _, _ = compute_current_session(con, _FIXED_NOW)
     assert sid is None
     assert tokens == 0
     assert requests == 0

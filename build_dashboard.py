@@ -15,8 +15,10 @@ self-contained `dashboard.html` (без backend, без внешнего JSON).
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import math
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -54,7 +56,7 @@ WEEKDAY_LABELS: tuple[str, ...] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб
 # расхода, ниже которого нужно остаться, чтобы уложиться в капу за 7 дней
 # (включая сегодня). Если сегодня превысил — порог автоматически пересчитается
 # на завтра (формула зависит от today_spent и days_left, оба обновляются).
-WEEKLY_CAP_TOKENS: int = 75_000_000
+WEEKLY_CAP_TOKENS: int = 60_000_000
 
 # Гамма интенсивности для карточки «TODAY · 24H STREAM» — GitHub contribution
 # palette (https://github.com/Readme-Stats). L0 — фон пустой/неактивной ячейки
@@ -73,6 +75,11 @@ GITHUB_PALETTE: dict[str, str] = {
 # и .bar-24h.peak). Семантические state'ы (active/peak/current/future/empty)
 # добавляются как дополнительные классы — НЕ вместо intensity.
 _HOUR_STATE_LEVELS: tuple[str, ...] = ("L1", "L2", "L3", "L4")
+
+# Ключ в record_json таблицы local_runtime_sessions, по которому достаём
+# путь workspace текущей сессии. Источник истины — runtime v2, см. анализ
+# inspect_session.py (2026-08-05): поле workspaceDir присутствует в record_json.
+_SESSION_RECORD_PATH_KEY = "workspaceDir"
 
 # ---- domain types ----------------------------------------------------------
 
@@ -231,29 +238,39 @@ def compute_today_meta(con: sqlite3.Connection, now_msk: datetime) -> tuple[int,
 
 def compute_current_session(
     con: sqlite3.Connection, now_msk: datetime
-) -> tuple[str | None, int, int]:
+) -> tuple[str | None, int, int, str | None, int | None]:
     """Метрики самой свежей сессии за сегодня (для hero-pill "session").
 
-    Возвращает (session_id, tokens, user_requests) для сессии с самым поздним
-    событием в окне [00:00 MSK, now_msk]. Используется в pill'е формата
-    `actual(requests) / avg_per_session(avg_requests_per_session)`, чтобы
-    числитель и знаменатель были в одних единицах (per-session). Иначе
-    today_tokens / avg_tokens_per_session = today_sessions (тривиально = N сессий)
-    и pill всегда красный — бесполезный сигнал.
+    Возвращает (session_id, tokens, user_requests, path, duration_ms) для сессии
+    с самым поздним событием в окне [00:00 MSK, now_msk]:
+      - tokens, user_requests — для pill'а формата `actual(requests) / avg(...)`.
+        Числитель и знаменатель в одних единицах (per-session), иначе
+        today_tokens / avg_tokens_per_session = today_sessions (тривиально = N
+        сессий) и pill всегда красный — бесполезный сигнал.
+      - path — workspaceDir из local_runtime_sessions.record_json (см.
+        _fetch_session_path). None если таблицы/поля нет или путь пустой.
+      - duration_ms — MAX(created_at_ms) − MIN(created_at_ms) по ВСЕЙ сессии
+        (без фильтра по дню). Даже если текущее сообщение пришло сегодня в 17:26,
+        а сессия стартовала вчера в 23:10 — длительность покроет весь хвост.
 
     Логика:
       1. Находим session_id с MAX(created_at_ms) за сегодня (LIMIT 1).
       2. Суммируем input+output по token_usage для этой сессии за сегодня.
       3. Считаем user-сообщения для этой сессии за сегодня.
+      4. Достаём workspaceDir из local_runtime_sessions.record_json.
+      5. Считаем MIN/MAX по created_at_ms всей сессии.
 
     Edge cases:
-      - Нет строк за сегодня → (None, 0, 0); рендер pill'а покажет "—".
-      - Самая свежая сессия есть, но в token_usage для неё 0 строк → (sid, 0, K).
-        Pill покажет actual=0 → level="none" (нейтральный), а не "ok" (0/avg).
-        Это сознательно: "ещё ничего не сожгли в текущей сессии" ≠ "зелёный".
+      - Нет строк за сегодня → (None, 0, 0, None, None); рендер покажет "—".
+      - Самая свежая сессия есть, но в token_usage для неё 0 строк →
+        (sid, 0, K, path, dur). Pill покажет actual=0 → level="none".
+      - local_runtime_sessions отсутствует (старые runtime, тесты без этой
+        таблицы) → (sid, tokens, requests, None, dur); _fetch_session_path
+        глушит sqlite3.OperationalError.
 
-    Performance: 3 запроса, каждый full-scan за сегодня. На <10K строках
-    незаметно (<5 мс). Беклог — индекс по created_at_ms.
+    Performance: 5 запросов (3 по message_rows, 1 по token_usage, 1 по sessions).
+    Каждый full-scan / PK-lookup. На <10K строках незаметно (<10 мс).
+    Беклог — индекс по created_at_ms.
     """
     today = now_msk.date()
     since_msk_midnight = datetime.combine(today, datetime.min.time(), tzinfo=MSK)
@@ -266,7 +283,7 @@ def compute_current_session(
         (since_ts_ms,),
     ).fetchone()
     if sid_row is None or sid_row[0] is None:
-        return None, 0, 0
+        return None, 0, 0, None, None
     session_id = str(sid_row[0])
 
     tok_row = con.execute(
@@ -284,7 +301,19 @@ def compute_current_session(
     ).fetchone()
     user_requests = int(req_row[0]) if req_row else 0
 
-    return session_id, tokens, user_requests
+    path = _fetch_session_path(con, session_id)
+
+    dur_row = con.execute(
+        "SELECT MIN(created_at_ms), MAX(created_at_ms) "
+        "FROM local_runtime_message_rows "
+        "WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    duration_ms: int | None = None
+    if dur_row and dur_row[0] is not None and dur_row[1] is not None:
+        duration_ms = int(dur_row[1]) - int(dur_row[0])
+
+    return session_id, tokens, user_requests, path, duration_ms
 
 
 def current_window(now_msk: datetime) -> dict:
@@ -644,6 +673,97 @@ def fmt_delta_pct(curr: int, prev: int | None) -> str | None:
     return f"−{abs(pct):.0f}%"
 
 
+def fmt_duration(ms: int | None) -> str:
+    """Длительность сессии в читаемом виде.
+
+    Контракт:
+      - < 0 или None → '—' (нейтральный fallback).
+      - < 60s         → 'Ns' (например, первый запрос в сессии: '12s').
+      - < 60min       → 'Nmin' (например, '40min').
+      - < 1h и m=0    → 'Nh' (например, '2h').
+      - иначе         → 'Nh Mmin' (например, '1h 20min').
+
+    Используется в context-pill'е рядом с session/day pills. Мин/масштаб
+    выбраны под кейс "TL смотрит на дашборд раз в N минут и хочет быстро
+    понять, как давно открыта текущая сессия".
+    """
+    if ms is None or ms < 0:
+        return "—"
+    total_s = ms // 1000
+    if total_s < 60:
+        return f"{total_s}s"
+    total_min = total_s // 60
+    if total_min < 60:
+        return f"{total_min}min"
+    h, m = divmod(total_min, 60)
+    return f"{h}h" if m == 0 else f"{h}h {m}min"
+
+
+def project_title_from_path(path: str | None) -> str | None:
+    """Извлекает короткое имя проекта из workspace-пути.
+
+    Берёт последний сегмент пути и снимает префикс вида 'NNNN_' / 'NNNN-'
+    (наш конвенциональный маркер даты/порядка папок: '0731_college-publisher'
+    → 'college-publisher', '0803_agent-tokens-dashboard' → 'agent-tokens-dashboard').
+
+    Edge cases:
+      - None / пустая строка → None (рендер покажет '—').
+      - Только один сегмент (например, 'project') → 'project' (префикса нет).
+      - После strip пусто (например, '0803_') → возвращаем оригинальный
+        сегмент, чтобы не терять информацию (на UI будет '0803_', но это
+        лучше, чем пустота).
+
+    Нормализация: backslash → slash, trailing separators отрезаем — на
+    Windows путь может прийти с '\\' на конце, на POSIX с '/'.
+    """
+    if not path:
+        return None
+    normalized = path.rstrip("/\\").replace("\\", "/")
+    segments = [s for s in normalized.split("/") if s]
+    if not segments:
+        return None
+    last = segments[-1]
+    stripped = re.sub(r"^\d+[_\-]+", "", last)
+    return stripped if stripped else last
+
+
+def _fetch_session_path(con: sqlite3.Connection, session_id: str) -> str | None:
+    """Путь workspace из record_json в local_runtime_sessions.
+
+    Семантика:
+      - SELECT record_json WHERE session_id=? — одна строка на сессию.
+      - json.loads(record_json) — record_json это строка-JSON в SQLite.
+      - record[_SESSION_RECORD_PATH_KEY] — 'workspaceDir' в runtime v2
+        (подтверждено inspect_session.py 2026-08-05).
+
+    Failure modes (все → None, без exceptions наружу):
+      - Таблица local_runtime_sessions отсутствует (старые runtime, тесты
+        без неё) → sqlite3.OperationalError → None.
+      - session_id не найден → fetchone() вернёт None.
+      - record_json битый / None → JSONDecodeError / TypeError → None.
+      - workspaceDir пустой или не строка → None.
+
+    Безопасна для частого вызова: один SELECT, один json.loads, никаких
+    побочных эффектов.
+    """
+    try:
+        row = con.execute(
+            "SELECT record_json FROM local_runtime_sessions "
+            "WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        record = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    path = record.get(_SESSION_RECORD_PATH_KEY)
+    return str(path) if path else None
+
+
 def pill_level(actual: int | None, cap: int | None) -> str:
     """Цветовой уровень для числителя hero-pill (actual / cap).
 
@@ -983,17 +1103,57 @@ def _render_hero_pill(
     )
 
 
+def _render_session_context_pill(
+    title: str | None, duration_ms: int | None, path: str | None
+) -> str:
+    """Pill «название проекта · длительность» в начале hero-полосы.
+
+    Структура:
+      <span class="hero-pill hero-pill--context" title="<path>">
+        <span class="hero-pill__project">{title}</span>
+        <span class="hero-pill__duration">{duration}</span>
+      </span>
+
+    Семантика:
+      - title — короткое имя проекта (последняя папка пути без NNNN_-префикса),
+        либо '—' если путь не определён.
+      - duration — fmt_duration(duration_ms), '—' если None.
+      - path уходит в HTML title (tooltip) — на самом pill'е не показываем,
+        чтобы не раздувать. Если path=None, в tooltip кладём "путь не определён",
+        чтобы UI не выглядел сломанным.
+
+    html.escape на title и path — обязательно: title приходит из workspaceDir
+    (может содержать &, <, >, кавычки), path тоже. Без escape — XSS-вектор
+    внутри атрибута title и в тексте .hero-pill__project.
+    """
+    title_str = html.escape(title or "—")
+    duration_str = fmt_duration(duration_ms)
+    path_tip = html.escape(path or "путь не определён")
+    return (
+        f'<span class="hero-pill hero-pill--context" title="{path_tip}">'
+        f'<span class="hero-pill__project">{title_str}</span>'
+        f'<span class="hero-pill__duration">{duration_str}</span>'
+        f"</span>"
+    )
+
+
 def _render_hero_pills(
     *,
     current_session_tokens: int | None,
     current_session_requests: int,
+    current_session_title: str | None,
+    current_session_duration_ms: int | None,
+    current_session_path: str | None,
     avg_tokens_per_session: int | None,
     today_avg: float,
     today_tokens: int,
     weekly_threshold: int | None,
 ) -> str:
-    """Два pill'а в hero-полосе: session и day.
+    """Три pill'а в hero-полосе: context · session · day.
 
+    - context: «<title> · <duration>» с path в tooltip. Семантически другой
+      объект, чем session/day (не ratio, а метаданные сессии), поэтому
+      выделен отдельным pill'ом слева.
     - session: current_session_tokens(requests) / avg_tokens_per_session(avg_requests).
       Числитель — самая свежая сессия за сегодня (см. compute_current_session),
       знаменатель — среднее по всем сессиям за сегодня. Per-session vs per-session,
@@ -1004,6 +1164,9 @@ def _render_hero_pills(
     Pill с пустым знаменателем (нет данных за день / threshold=None / current_session
     нет) рендерится как "—" со neutral-цветом, чтобы layout не «скакал» между билдами.
     """
+    context_pill = _render_session_context_pill(
+        current_session_title, current_session_duration_ms, current_session_path
+    )
     session_actual = current_session_tokens if current_session_tokens is not None else None
     session_pill = _render_hero_pill(
         actual=session_actual,
@@ -1019,7 +1182,7 @@ def _render_hero_pills(
         cap_paren=None,
         title="Потрачено сегодня / рассчитанный потолок дня (weekly cap / days_left)",
     )
-    return f'<div class="hero-pills">{session_pill}{day_pill}</div>'
+    return f'<div class="hero-pills">{context_pill}{session_pill}{day_pill}</div>'
 
 
 def render_html(
@@ -1047,6 +1210,9 @@ def render_html(
     today_24h_peak: tuple[int, int] | None,
     current_session_tokens: int | None,
     current_session_requests: int,
+    current_session_title: str | None = None,
+    current_session_duration_ms: int | None = None,
+    current_session_path: str | None = None,
     now_msk: datetime | None = None,
 ) -> str:
     # Параметр `now_msk` опциональный — если не передан, берём реальное время.
@@ -1107,6 +1273,9 @@ def render_html(
     hero_pills = _render_hero_pills(
         current_session_tokens=current_session_tokens,
         current_session_requests=current_session_requests,
+        current_session_title=current_session_title,
+        current_session_duration_ms=current_session_duration_ms,
+        current_session_path=current_session_path,
         avg_tokens_per_session=avg_tokens_per_session,
         today_avg=today_avg,
         today_tokens=today_tokens,
@@ -1210,6 +1379,28 @@ def render_html(
     .hero-pill__sep {{ color: var(--muted); font-weight: 400; }}
     .hero-pill__cap {{ color: #e6ebf6; font-weight: 600; }}
     .hero-pill__paren {{ color: #8ea3c7; font-weight: 500; font-size: 12px; }}
+    /* Context pill (название проекта · длительность сессии). Семантически другой
+       объект, чем session/day (метаданные, а не ratio), поэтому отдельный pill.
+       .hero-pill уже даёт baseline (border, background, padding); здесь — только
+       layout и типографика внутри.
+       - gap:8px — расстояние между title и duration, чуть больше, чем у
+         baseline-pill'а (6px), чтобы визуально отделить «имя» от «метрики».
+       - .hero-pill__project — bold, var(--ink), ellipsis при переполнении.
+         max-width:260px — рассчитано на 30-40 символов, на типичных именах
+         папок ('college-publisher', 'agent-tokens-dashboard') влезает целиком,
+         на аномально длинных — обрезается с многоточием.
+       - .hero-pill__duration — серый, шрифт на 1px меньше, отделён вертикальной
+         палочкой слева. Контраст с ярким .hero-pill__project даёт визуальный
+         «псевдо-ratio» без введения новой семантики. */
+    .hero-pill--context {{ gap: 8px; align-items: center; }}
+    .hero-pill__project {{
+      font-weight: 800; color: var(--ink);
+      max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }}
+    .hero-pill__duration {{
+      color: #8ea3c7; font-weight: 600; font-size: 12px;
+      border-left: 1px solid rgba(255,255,255,0.14); padding-left: 8px;
+    }}
     .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
     .kpi {{
       padding: 18px 18px 16px; min-height: 168px;
@@ -1794,11 +1985,17 @@ def main() -> int:
     # читателя, чем один длинный блок.
     with open_db(args.db) as con:
         today_sessions, today_user_requests, today_avg = compute_today_meta(con, now_msk)
-        # Самая свежая сессия за сегодня — для hero-pill "session".
+        # Самая свежая сессия за сегодня — для hero-pill'ов "session" и
+        # "context" (название проекта, длительность, путь в tooltip).
         # None-первый элемент допустим (день только начался), см. compute_current_session.
-        _current_sid, current_session_tokens, current_session_requests = (
-            compute_current_session(con, now_msk)
-        )
+        (
+            _current_sid,
+            current_session_tokens,
+            current_session_requests,
+            current_session_path,
+            current_session_duration_ms,
+        ) = compute_current_session(con, now_msk)
+    current_session_title = project_title_from_path(current_session_path)
 
     current_hour_tokens = compute_current_hour(hourly, today)
     today_tokens = compute_today(hourly, now_msk)
@@ -1854,7 +2051,9 @@ def main() -> int:
     )
     log(
         f"[build] current_session  sid={_current_sid}  "
-        f"tokens={current_session_tokens}  requests={current_session_requests}"
+        f"tokens={current_session_tokens}  requests={current_session_requests}  "
+        f"path={current_session_path}  title={current_session_title}  "
+        f"duration={fmt_duration(current_session_duration_ms)}"
     )
     log(f"[build] active_window = {window_label}, total = {window_total}")
     for h, v, d in window_entries:
@@ -1898,6 +2097,9 @@ def main() -> int:
         today_24h_peak=today_24h_peak_val,
         current_session_tokens=current_session_tokens,
         current_session_requests=current_session_requests,
+        current_session_title=current_session_title,
+        current_session_duration_ms=current_session_duration_ms,
+        current_session_path=current_session_path,
     )
 
     if args.no_write:
