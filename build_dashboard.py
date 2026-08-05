@@ -1596,10 +1596,31 @@ def render_html(
     }}
     .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
     .kpi {{
+      position: relative;            /* якорь для ::before-полоски */
       padding: 18px 18px 16px; min-height: 168px;
       display: flex; flex-direction: column;
+      border-radius: 10px 22px 22px 10px;   /* override .panel: слева меньше,
+                                              чтобы полоска читалась как "загиб" */
       background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0)), var(--panel-2);
+      overflow: hidden;              /* ::before-полоска наследует border-radius .kpi */
     }}
+    /* Акцентная вертикальная полоска слева, как в референсе 2026-08-05
+       (6 нижних карточек-метрик). Тонкая (3px), на всю высоту карточки,
+       повторяет скругление .kpi слева. Цвет управляется --kpi-accent
+       через модификаторы .kpi--yellow/--blue/--green/--orange. */
+    .kpi::before {{
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--kpi-accent, #facc15);
+      border-radius: 10px 0 0 10px;
+      pointer-events: none;
+    }}
+    .kpi--yellow {{ --kpi-accent: #facc15; }}  /* ТЕКУЩИЙ МОМЕНТ */
+    .kpi--blue   {{ --kpi-accent: #3b82f6; }}  /* СЕГОДНЯ */
+    .kpi--green  {{ --kpi-accent: #10b981; }}  /* РАБОЧЕЕ ВРЕМЯ */
+    .kpi--orange {{ --kpi-accent: #fb923c; }}  /* АКТИВНОСТЬ */
     .kpi-head {{ display: flex; justify-content: space-between; align-items: start; gap: 10px; }}
     .kpi-title {{
       color: rgba(216, 223, 236, 0.54);
@@ -1997,7 +2018,7 @@ def render_html(
           <div class="tz-chip">MSK (UTC+3)</div>
         </div>
         <section class="kpis">
-          <article class="panel kpi">
+          <article class="panel kpi kpi--yellow">
             <div class="kpi-head">
               <div>
                 <div class="kpi-title">Текущий момент</div>
@@ -2006,7 +2027,7 @@ def render_html(
             </div>
             <div class="kpi-value">{fmt_tokens(current_hour_tokens)}</div>
           </article>
-          <article class="panel kpi">
+          <article class="panel kpi kpi--blue">
             <div class="kpi-head">
               <div>
                 <div class="kpi-title">Сегодня</div>
@@ -2015,7 +2036,7 @@ def render_html(
             </div>
             <div class="kpi-value">{fmt_tokens(today_tokens)}</div>
           </article>
-          <article class="panel kpi">
+          <article class="panel kpi kpi--green">
             <div class="kpi-head">
               <div>
                 <div class="kpi-title">Рабочее время</div>
@@ -2024,7 +2045,7 @@ def render_html(
             </div>
             <div class="kpi-value">{fmt_tokens(window_total)}</div>
           </article>
-          <article class="panel kpi">
+          <article class="panel kpi kpi--orange">
             <div class="kpi-head">
               <div>
                 <div class="kpi-title">Активность</div>
