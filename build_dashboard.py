@@ -691,12 +691,12 @@ def fmt_duration(ms: int | None) -> str:
         return "—"
     total_s = ms // 1000
     if total_s < 60:
-        return f"{total_s}s"
+        return f"{total_s} s"
     total_min = total_s // 60
     if total_min < 60:
-        return f"{total_min}min"
+        return f"{total_min} min"
     h, m = divmod(total_min, 60)
-    return f"{h}h" if m == 0 else f"{h}h {m}min"
+    return f"{h} h" if m == 0 else f"{h} h {m} min"
 
 
 def project_title_from_path(path: str | None) -> str | None:
