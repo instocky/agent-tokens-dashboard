@@ -866,6 +866,7 @@ def render_html(
     today_sessions: int,
     today_user_requests: int,
     today_avg: float,
+    avg_tokens_per_session: int | None,
     window_total: int,
     window_delta: str | None,
     window_sparkline: list[int],
@@ -1006,6 +1007,24 @@ def render_html(
       font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
     }}
     .kpi-time {{ margin-top: 6px; color: #96a0b5; font-size: 13px; line-height: 1.35; }}
+    /* .kpi-pill — маленькая "таблетка" в правом верхнем углу карточки KPI.
+       Сейчас используется только в карточке «Активность» для avg tokens / session
+       (≈ N/сессию), но стиль общий — пригодится и для других мета-метрик.
+       align-self:start — на случай, если родитель — flex column, держим top.
+       white-space:nowrap — внутри pill сидят number + "/сессию", перенос ломает
+       компактный вид (две строки в крошечном боксе). */
+    .kpi-pill {{
+      align-self: start;
+      padding: 4px 9px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      color: #96a0b5;
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 11px; line-height: 1.4;
+      white-space: nowrap;
+    }}
+    .kpi-pill strong {{ color: #e6ebf6; font-weight: 700; }}
     /* .kpi-value: прижат к низу карточки через margin-top:auto (родитель .kpi
        — flex column). Спарклайны удалены из карточек 1-3, поэтому раньше
        .spark давал визуальный низ; теперь его роль играет .kpi-value.
@@ -1370,6 +1389,9 @@ def render_html(
                 <div class="kpi-title">Активность</div>
                 <div class="kpi-time">{today_time}</div>
               </div>
+              <div class="kpi-pill" title="Средний расход токенов (input+output) на одну сессию сегодня">
+                ≈ <strong>{fmt_tokens(avg_tokens_per_session)}</strong>/сессию
+              </div>
             </div>
             <div class="kpi-fraction">
               <div class="kpi-value kpi-fraction__value">{fmt_avg(today_avg)}</div>
@@ -1534,6 +1556,15 @@ def main() -> int:
 
     current_hour_tokens = compute_current_hour(hourly, today)
     today_tokens = compute_today(hourly, now_msk)
+    # Среднее число токенов (input+output) на одну сессию за сегодня.
+    # None при today_sessions==0 — чтобы pill показал "—", а не "0/сессию"
+    # (sessions считаются из message_rows и независимы от token_usage, см.
+    # обсуждение compute_today_meta про «сессия, в которой что-то происходило»).
+    # int-truncation: today_tokens / today_sessions — для pill-формата дробная
+    # часть не нужна, fmt_tokens сам подберёт K/M.
+    avg_tokens_per_session: int | None = (
+        int(today_tokens / today_sessions) if today_sessions > 0 else None
+    )
     window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
     window_wraps = current_window(now_msk)["wraps"]
     weeks = compute_weekly(hourly, today)
@@ -1572,7 +1603,8 @@ def main() -> int:
     log(f"[build] today       (00:00–{now_msk.hour:02d}:59) = {today_tokens}")
     log(
         f"[build] today_meta  sessions={today_sessions}  "
-        f"user_requests={today_user_requests}  avg={today_avg}"
+        f"user_requests={today_user_requests}  avg={today_avg}  "
+        f"avg_tokens/session={avg_tokens_per_session}"
     )
     log(f"[build] active_window = {window_label}, total = {window_total}")
     for h, v, d in window_entries:
@@ -1602,6 +1634,7 @@ def main() -> int:
         today_sessions=today_sessions,
         today_user_requests=today_user_requests,
         today_avg=today_avg,
+        avg_tokens_per_session=avg_tokens_per_session,
         window_total=window_total,
         window_delta=fmt_delta_pct(window_total, prev_window),
         window_sparkline=spark_window,
