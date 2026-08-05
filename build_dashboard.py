@@ -1502,14 +1502,6 @@ def render_html(
       display: flex; justify-content: space-between; align-items: end; gap: 20px;
       padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.06);
     }}
-    .hero-meta {{
-      display: flex; align-items: center; gap: 12px; margin-top: 12px;
-      color: var(--muted); font-size: 13px;
-    }}
-    .dot-live {{
-      width: 8px; height: 8px; border-radius: 999px;
-      background: var(--accent-2); box-shadow: 0 0 18px rgba(16,185,129,0.55);
-    }}
     /* h1: удалён вместе с <h1>Расход токенов runtime</h1> в hero — его роль
        взял <p class="eyebrow">Token Usage</p>. Если когда-то понадобится
        большой заголовок страницы, вернуть вместе с <h1> в markup. */
@@ -1519,7 +1511,7 @@ def render_html(
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 12px;
     }}
     /* ===== Hero Pills (header strip) =====
-       Промежуточная зона между hero-meta и tz-chip (раньше была пустой —
+       Промежуточная зона между hero-top и tz-chip (раньше была пустой —
        красная рамка в макете 2026-08-05). Два pill'а:
          - "combined" (слева): project | duration | actual(req) • cap(avg_req).
            Объединяет бывшие context+session pill'ы (TL-фидбэк 2026-08-05) — два
@@ -2000,10 +1992,6 @@ def render_html(
         <div class="hero-top">
           <div>
             <p class="eyebrow">Today Token Usage</p>
-            <div class="hero-meta">
-              <span class="dot-live"></span>
-              <span>Обновление каждые 5 минут · Input + Output</span>
-            </div>
           </div>
           {hero_pills}
           <div class="tz-chip">Europe/Moscow (UTC+3)</div>
