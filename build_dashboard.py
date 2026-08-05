@@ -994,8 +994,8 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
       </div>
 
     Семантика классов бара:
-      .bar-24h.intensity-L1..L4  — палитра GitHub по квартилю
-      .bar-24h.peak              — топ-1 час, яркий акцент
+      .bar-24h.active            — прошлый час с данными
+      .bar-24h.peak              — топ-1 час (state="peak")
       .bar-24h.current           — текущий час (in-progress, тонкий outline)
       .bar-24h.future            — h > now.hour, пунктир
       .bar-24h.empty             — h < now.hour, value=0, нейтральный 2px floor
@@ -1016,17 +1016,17 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
 
     cells: list[str] = []
     for b in bars:
-        # Класс бара: комбинируем state и (если есть) intensity.
+        # Класс бара: один из active/peak/current/future/empty — все три
+        # "с данными" (active/peak/current) рендерятся одним цветом
+        # (см. CSS), intensity-* классы больше не добавляются.
         if b.state == "peak":
             cls = "bar-24h peak"
             height_pct = _pct(b.value)
         elif b.state == "current":
             cls = "bar-24h current"
-            if b.intensity:
-                cls += f" intensity-{b.intensity}"
             height_pct = _pct(b.value)
         elif b.state == "active":
-            cls = f"bar-24h active intensity-{b.intensity or 'L2'}"
+            cls = "bar-24h active"
             height_pct = _pct(b.value)
         elif b.state == "future":
             cls = "bar-24h future"
@@ -1702,20 +1702,23 @@ def render_html(
       transition: filter 0.15s ease;
     }}
     .bar-24h:hover {{ filter: brightness(1.18); }}
-    /* GitHub intensity scale (4 уровня по квартилям) */
-    .bar-24h.intensity-L1 {{ background: #9be9a8; }}
-    .bar-24h.intensity-L2 {{ background: #40c463; }}
-    .bar-24h.intensity-L3 {{ background: #30a14e; }}
-    .bar-24h.intensity-L4 {{ background: #216e39; }}
-    /* Peak — ярче максимального L4, со свечением. Всегда идёт БЕЗ intensity-*,
-       чтобы фон шёл от .peak, а не перебивался квартильным классом. */
-    .bar-24h.peak {{
-      background: #00d97e;
-      box-shadow: 0 0 12px rgba(0, 217, 126, 0.45),
-                  inset 0 1px 0 rgba(255,255,255,0.25);
+    /* Single-shade palette (TL review, 2026-08-05): все бары с данными
+       (active / peak / current) — один и тот же тёмно-зелёный #216e39.
+       Величина читается только высотой; peak — самый высокий бар, без
+       отдельного bright accent. L1..L3 шкала GitHub-палитры убрана
+       как избыточная — она дублировала height-кодирование. */
+    .bar-24h.active,
+    .bar-24h.peak,
+    .bar-24h.current {{
+      background: #216e39;
     }}
-    /* Current hour (h == now.hour): та же заливка по intensity, но с тонким
-       контуром сверху, чтобы было видно «этот час ещё копит». */
+    /* Peak больше не имеет bright accent — отличается от active только
+       позицией в meta-строке карточки и тем, что это самый высокий бар. */
+    .bar-24h.peak {{
+      box-shadow: none;
+    }}
+    /* Current hour (h == now.hour): та же заливка, но с тонким контуром
+       сверху, чтобы было видно «этот час ещё копит». */
     .bar-24h.current {{
       outline: 1px solid rgba(255,255,255,0.55);
       outline-offset: -1px;
