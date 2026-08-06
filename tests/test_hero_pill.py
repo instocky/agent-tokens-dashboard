@@ -17,11 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import (  # noqa: E402
+from analytics import pill_level  # noqa: E402
+from build_dashboard import (  # noqa: E402  (Step 2: render)
     _build_hero_pill_inner,
     _render_combined_session_pill,
     _render_hero_pill,
-    pill_level,
 )
 
 

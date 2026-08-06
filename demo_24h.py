@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import build_dashboard as bd  # noqa: E402
-from build_dashboard import (  # noqa: E402
+from analytics import (  # noqa: E402
     MSK,
     WEEK_COUNT,
     WEEKLY_CAP_TOKENS,
@@ -40,8 +40,10 @@ from build_dashboard import (  # noqa: E402
     compute_weekly_threshold,
     current_window,
     fmt_delta_pct,
-    render_html,
     today_24h_peak,
+)
+from build_dashboard import (  # noqa: E402  (render-side, Step 2: render_dashboard)
+    render_html,
     _y_max_for,
     _y_ticks_for_log,
 )

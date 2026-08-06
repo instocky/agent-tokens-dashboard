@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import MSK, compute_current_session, compute_today_meta, fmt_avg  # noqa: E402
+from analytics import MSK, compute_current_session, compute_today_meta, fmt_avg  # noqa: E402
 
 
 # ---- fixtures --------------------------------------------------------------

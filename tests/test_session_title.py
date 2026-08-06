@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import _fetch_session_title  # noqa: E402
+from analytics import _fetch_session_title  # noqa: E402
 
 
 # ---- helpers ---------------------------------------------------------------

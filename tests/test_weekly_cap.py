@@ -15,12 +15,12 @@ from pathlib import Path
 # Чтобы import работал и при запуске из корня, и из tests/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import (  # noqa: E402
+from analytics import (  # noqa: E402
     Week,
     WEEKLY_CAP_TOKENS,
-    _render_weekly_grid,
     compute_weekly_threshold,
 )
+from build_dashboard import _render_weekly_grid  # noqa: E402  (Step 2: render)
 
 
 # ---- compute_weekly_threshold (чистая логика) -----------------------------

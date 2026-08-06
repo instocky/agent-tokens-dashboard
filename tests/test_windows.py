@@ -13,7 +13,7 @@ from pathlib import Path
 # Чтобы import работал и при запуске из корня, и из tests/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import (  # noqa: E402
+from analytics import (  # noqa: E402
     MSK,
     current_window,
     compute_current_window,

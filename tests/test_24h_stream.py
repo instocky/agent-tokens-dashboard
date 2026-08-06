@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from build_dashboard import (  # noqa: E402
+from analytics import (  # noqa: E402
     MSK,
     HourlyBar,
     _intensity_level,
