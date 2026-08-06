@@ -100,6 +100,34 @@ class HourlyBar:
     intensity: str | None  # "L1" | "L2" | "L3" | "L4" | None
 
 
+@dataclass(frozen=True)
+class DailyBar:
+    """Один день в 4-недельной daily-view (calendar heatmap).
+
+    Поля:
+      date           — MSK-дата дня.
+      value          — сумма за 24 часа дня. None = empty (прошедший день без
+                       данных) или future (дата ещё не наступила).
+      state          — "active" (прошедший день с данными) | "current"
+                       (сегодня, копит) | "future" (ещё не наступил) | "empty"
+                       (прошедший день без данных).
+      intensity      — L1..L4 для active/current с value > 0, иначе None.
+                       Квартили считаются по всем ненулевым дням окна
+                       (включая current — иначе сегодня «выпадает» из шкалы).
+      weekday        — 0..6 (Пн..Вс, date.weekday()).
+      iso_week       — ISO-номер недели (1..53).
+      is_current_week — True, если этот день принадлежит последней из 4 недель
+                        окна (W-0).
+    """
+    date: date
+    value: int | None
+    state: str
+    intensity: str | None  # "L1" | "L2" | "L3" | "L4" | None
+    weekday: int         # 0..6 (Пн..Вс)
+    iso_week: int
+    is_current_week: bool
+
+
 # ------------------------------------------------------------------
 # Database Access
 # ------------------------------------------------------------------
@@ -588,6 +616,141 @@ def today_24h_peak(bars: list[HourlyBar]) -> tuple[int, int] | None:
     return None
 
 
+def _daily_intensity(value: int, sorted_active: list[int]) -> str | None:
+    """Уровень GitHub-палитры (L1..L4) для одного дня в 4-недельном heatmap'е.
+
+    Семантика (аналог `_intensity_level`, но на дневной сетке):
+      - sorted_active — ненулевые значения ДНЕЙ, отсортированные по возрастанию.
+        Сюда включаются и current-дни (сегодня), иначе текущий день «выпадает»
+        из шкалы, и его ячейка на heatmap'е не имеет цвета.
+      - Границы квартилей — по позиции: n//4, n//2, 3n//4 (как в 24H-карточке).
+      - Если sorted_active пуст или n < 4 — все значения получают L2 (визуально
+        нейтральный средний уровень; на малом N нет смысла в четырёхступенчатой
+        шкале — см. ADR §2.3).
+      - value <= 0 → None (для current с value=0 день только начался, шкала
+        бессмысленна; для future/empty value=None по построению — здесь их нет).
+
+    Чистая функция: тестируется без моков.
+    """
+    n = len(sorted_active)
+    if n == 0 or value <= 0:
+        return None
+    if n < 4:
+        return "L2"
+    q1 = sorted_active[n // 4]
+    q2 = sorted_active[n // 2]
+    q3 = sorted_active[(3 * n) // 4]
+    if value <= q1:
+        return "L1"
+    if value <= q2:
+        return "L2"
+    if value <= q3:
+        return "L3"
+    return "L4"
+
+
+def compute_daily_4w(
+    hourly: dict[tuple[date, int], int],
+    today: date,
+    week_count: int = WEEK_COUNT,
+) -> list[DailyBar]:
+    """4-недельная daily-view (calendar heatmap), oldest-first.
+
+    Возвращает список из week_count * 7 = 28 DailyBar (фиксировано):
+    Пн..Вс × (W-3, W-2, W-1, W-0), oldest → newest. Колонка W-0 = текущая
+    неделя. Соседство с `compute_weekly`: то же окно, те же дни — отличается
+    плотностью (heatmap vs grouped-bars) и наличием intensity/state.
+
+    Логика состояний (взаимоисключающие):
+      - "future"  — day_date > today (любой недели). value=None, intensity=None.
+      - "current" — day_date == today. value = sum 24h (может быть 0).
+                    intensity = `_daily_intensity(value, sorted)` при value > 0,
+                    иначе None.
+      - "empty"   — day_date < today, и за день нет ни одной строки в `hourly`
+                    (все 24 часа отсутствуют). value=None, intensity=None.
+      - "active"  — day_date < today, и за день есть хотя бы одна строка.
+                    value = sum 24h, intensity = `_daily_intensity(value, sorted)`.
+
+    Квартили считаются ОДИН РАЗ для всего окна по ненулевым дням
+    (active + current-with-value>0), иначе сегодня «выпадает» из шкалы —
+    см. ADR-002 §2.3. Future/empty в распределение не входят (value=None).
+
+    Edge cases:
+      - today = Пн → 1 current (Пн W-0) + 6 future (Вт..Вс W-0) + 21 active/empty.
+        Окно всё равно 28.
+      - today = Вс → 7 active/current (вся W-0 в прошлом) + 0 future.
+        Окно всё равно 28.
+      - Вся БД пустая (hourly == {}) → 7 current с value=0 (если today в W-0),
+        21 empty (W-3..W-1). Quartile base пустой → все intensity = None.
+
+    Параметры плоские (без now_msk/SQLite) — функция чистая, тестируется
+    без моков. Вызов из build_snapshot подставляет `hourly` и `today` из
+    уже агрегированных данных.
+    """
+    iso = today.isocalendar()  # (iso_year, iso_week, iso_weekday 1..7)
+    current_monday = today - timedelta(days=iso[2] - 1)
+    since = current_monday - timedelta(weeks=week_count - 1)
+
+    # Проход 1: собираем 28 daily-баров без intensity, чтобы посчитать sorted_active.
+    raw: list[DailyBar] = []
+    for w_idx in range(week_count):
+        # w_idx=0 → самая старая неделя, w_idx=week_count-1 → текущая.
+        monday = since + timedelta(weeks=w_idx)
+        is_current_week = (monday == current_monday)
+        for d_idx in range(7):
+            day_date = monday + timedelta(days=d_idx)
+            if day_date > today:
+                state = "future"
+                value: int | None = None
+            elif day_date == today:
+                value = sum(hourly.get((day_date, h), 0) for h in range(24))
+                state = "current"
+            else:
+                has_any = any((day_date, h) in hourly for h in range(24))
+                if not has_any:
+                    state = "empty"
+                    value = None
+                else:
+                    value = sum(hourly.get((day_date, h), 0) for h in range(24))
+                    state = "active"
+            raw.append(
+                DailyBar(
+                    date=day_date,
+                    value=value,
+                    state=state,
+                    intensity=None,  # заполним в проходе 2
+                    weekday=day_date.weekday(),
+                    iso_week=day_date.isocalendar()[1],
+                    is_current_week=is_current_week,
+                )
+            )
+
+    # Квартили считаются ОДИН РАЗ для всего окна (28 дней).
+    sorted_active = sorted(
+        b.value for b in raw if b.value is not None and b.value > 0
+    )
+
+    # Проход 2: назначаем intensity по квартилям.
+    out: list[DailyBar] = []
+    for b in raw:
+        if b.value is not None and b.value > 0:
+            intensity = _daily_intensity(b.value, sorted_active)
+        else:
+            intensity = None
+        out.append(
+            DailyBar(
+                date=b.date,
+                value=b.value,
+                state=b.state,
+                intensity=intensity,
+                weekday=b.weekday,
+                iso_week=b.iso_week,
+                is_current_week=b.is_current_week,
+            )
+        )
+    return out
+
+
 def project_title_from_path(path: str | None) -> str | None:
     """Извлекает короткое имя проекта из workspace-пути.
 
@@ -734,9 +897,9 @@ def fmt_duration(ms: int | None) -> str:
 def build_snapshot(db_path: Path, now_msk: datetime | None = None) -> dict:
     """Собрать snapshot по контракту §2.4 ADR.
 
-    Возвращает dict с пятью секциями: hour / today / window / weekly / session.
-    Каждая секция — отдельный локальный dict, чтобы контракт не сводился к
-    плоскому литералу на 100 строк (см. §2.4).
+    Возвращает dict с шестью секциями: hour / today / window / weekly /
+    session / daily. Каждая секция — отдельный локальный dict, чтобы контракт
+    не сводился к плоскому литералу на 100 строк (см. §2.4).
 
     Параметр `now_msk` опционален: если None, берётся `datetime.now(MSK)`.
     Это позволяет тестам и demo_24h.py фиксировать «сейчас» детерминированно.
@@ -787,6 +950,31 @@ def build_snapshot(db_path: Path, now_msk: datetime | None = None) -> dict:
 
     today_24h_bars = compute_today_24h(hourly, now_msk)
     today_24h_peak_val = today_24h_peak(today_24h_bars)
+
+    # Daily 4-week view (heatmap). Считается из того же `hourly` — никакого
+    # нового SQL. compute_daily_4w возвращает 28 DailyBar (Пн..Вс × 4 недели),
+    # выровненных по ISO-неделям, что важно для day-of-week pattern
+    # (строки = Пн..Вс, столбцы = W-3..W-0).
+    daily_bars = compute_daily_4w(hourly, today)
+
+    # burn_7d_avg: среднее токенов/день за последние 7 дней (today + 6 prev).
+    # По построению 7d_window не содержит future-дней (все даты <= today).
+    # empty-дни (value=None) вносят 0; current-день (today) вносит свой
+    # running total (даже если 0). При all-zero → None (сигнал "недостаточно
+    # данных для сравнения" — pill покажет "—"). Floor-деление, как в
+    # `compute_weekly_threshold` (консервативнее для пороговых сравнений).
+    daily_by_date: dict[date, int | None] = {b.date: b.value for b in daily_bars}
+    burn_7d_window = [today - timedelta(days=k) for k in range(6, -1, -1)]
+    burn_7d_sum = sum((daily_by_date.get(d) or 0) for d in burn_7d_window)
+    burn_7d_avg: int | None = burn_7d_sum // 7 if burn_7d_sum > 0 else None
+
+    # burn_today: pill_level(today_value, 7d_avg) при 7d_avg > 0, иначе "none".
+    # Семантика: "сегодня расходуется vs средний день последних 7 дней".
+    today_value = daily_by_date.get(today) or 0
+    if burn_7d_avg is not None and burn_7d_avg > 0:
+        burn_today = pill_level(today_value, burn_7d_avg)
+    else:
+        burn_today = "none"
 
     # Порог расхода на сегодня (weekly cap threshold). Считаем только если
     # текущая неделя действительно последняя в окне (она всегда последняя по
@@ -841,6 +1029,15 @@ def build_snapshot(db_path: Path, now_msk: datetime | None = None) -> dict:
         "level": pill_level(current_session_tokens, WEEKLY_CAP_TOKENS),
     }
 
+    daily_dict = {
+        "since": since,                          # понедельник W-3 (старт окна 4 недель)
+        "weeks": daily_bars,                     # 28 DailyBar (Пн..Вс × 4 недели)
+        "current_weekday": now_msk.weekday(),    # 0..6 (Пн..Вс)
+        "weekly_cap": WEEKLY_CAP_TOKENS,         # для burn-rate context, не для pill
+        "burn_today": burn_today,                # "ok" | "warn" | "over" | "none"
+        "burn_7d_avg": burn_7d_avg,              # None если 7d_avg == 0
+    }
+
     return {
         "now_msk": now_msk,
         "hour": hour,
@@ -848,4 +1045,5 @@ def build_snapshot(db_path: Path, now_msk: datetime | None = None) -> dict:
         "window": window_dict,
         "weekly": weekly_dict,
         "session": session_dict,
+        "daily": daily_dict,
     }
