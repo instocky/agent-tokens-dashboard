@@ -188,7 +188,7 @@ def test_render_bar_cell_wraps_each_bar() -> None:
 # ---- default constant sanity --------------------------------------------
 
 
-def test_weekly_cap_default_is_75m() -> None:
+def test_weekly_cap_default_is_60m() -> None:
     """Защита от случайной правки дефолта в build_dashboard.py.
 
     Если кто-то поменяет 60_000_000 на другое число, тест напомнит —
@@ -220,7 +220,7 @@ def main() -> int:
         test_render_threshold_positioned_via_bottom_pct,
         test_render_bar_cell_wraps_each_bar,
         # default
-        test_weekly_cap_default_is_75m,
+        test_weekly_cap_default_is_60m,
     ]
     passed = 0
     for t in tests:
