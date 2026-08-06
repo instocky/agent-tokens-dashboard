@@ -211,7 +211,7 @@ def _build_demo_snapshot() -> dict:
             "project_title": current_session_title,
             "record_title": current_session_record_title,
             "duration_ms": current_session_duration_ms,
-            "level": pill_level(current_session_tokens, avg_tokens_per_session),
+            "level": pill_level(current_session_tokens, WEEKLY_CAP_TOKENS),
         },
     }
     # Suppress unused — prev_* derived values are part of the old render_html
