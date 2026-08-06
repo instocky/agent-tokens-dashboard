@@ -28,7 +28,6 @@ from pathlib import Path
 # ---- DB / output paths ------------------------------------------------------
 
 # Абсолютные пути по умолчанию — рядом со скриптом. Переопределяются --db/--out.
-# DB_PATH: Path = Path(__file__).resolve().parent / "runtime-state.sqlite"
 DB_PATH: Path = Path("C:/Users/user/.minimax/v2/sqlite/runtime-state.sqlite")
 OUTPUT_PATH: Path = Path(__file__).resolve().parent / "dashboard.html"
 
