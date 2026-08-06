@@ -133,7 +133,7 @@ def test_render_threshold_appears_on_current_day_only() -> None:
     """
     # Пн W-32, потрачено 2.43M, days_left=7 → 10.37M
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, now_msk=NOW_MSK)
+    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, weekly_cap=WEEKLY_CAP_TOKENS, now_msk=NOW_MSK)
 
     # Threshold-блок присутствует
     assert 'class="threshold"' in html
@@ -148,7 +148,7 @@ def test_render_threshold_appears_on_current_day_only() -> None:
 def test_render_threshold_omitted_when_none() -> None:
     """weekly_threshold=None → threshold-блок не рендерится вообще."""
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=None, now_msk=NOW_MSK)
+    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=None, weekly_cap=WEEKLY_CAP_TOKENS, now_msk=NOW_MSK)
     assert 'class="threshold"' not in html
     assert "порог" not in html
 
@@ -164,7 +164,7 @@ def test_render_threshold_omitted_when_today_is_none() -> None:
     weeks = _make_weeks_for_render(today_value=None, is_current_index=1)
     # Не падает, threshold-блок может быть (т.к. day_d == today_d всё равно верно),
     # но это редкий сценарий — главное, что не падает.
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_000_000, now_msk=NOW_MSK)
+    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_000_000, weekly_cap=WEEKLY_CAP_TOKENS, now_msk=NOW_MSK)
     # bar.future (т.к. value is None), но .bar-cell всё равно есть
     assert 'class="bar-cell"' in html
 
@@ -175,7 +175,7 @@ def test_render_threshold_positioned_via_bottom_pct() -> None:
     Проверяем: bottom:N% присутствует в HTML (значит CSS-позиционирование сработает).
     """
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, now_msk=NOW_MSK)
+    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, weekly_cap=WEEKLY_CAP_TOKENS, now_msk=NOW_MSK)
     assert 'class="threshold" style="bottom:' in html
 
 
@@ -186,7 +186,7 @@ def test_render_bar_cell_wraps_each_bar() -> None:
     прямым flex-child .bars, после — обёрнут в .bar-cell для absolute-позиционирования.
     """
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, now_msk=NOW_MSK)
+    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142, weekly_cap=WEEKLY_CAP_TOKENS, now_msk=NOW_MSK)
     # 14 .bar-cell обёрток
     assert html.count('class="bar-cell"') == 14, (
         f"expected 14 bar-cells, got {html.count('class=\"bar-cell\"')}"

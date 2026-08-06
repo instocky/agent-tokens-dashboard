@@ -24,7 +24,6 @@ from datetime import datetime, timedelta
 # форматтеры). НЕ импортируем compute-функции, DB-доступ и `pill_level`.
 from analytics import (  # noqa: E402
     WEEKDAY_LABELS,
-    WEEKLY_CAP_TOKENS,
     HourlyBar,
     Week,
     fmt_avg,
@@ -160,7 +159,7 @@ def _axis_labels_log(log_info) -> str:
 
 def _render_weekly_grid(
     weeks: list[Week], scale: str, y_info, weekly_threshold: int | None = None,
-    *, now_msk: datetime,
+    *, weekly_cap: int, now_msk: datetime,
 ) -> str:
     """HTML-грид 4 недели × 7 дней. Недели — колонки, дни — бары.
 
@@ -227,7 +226,7 @@ def _render_weekly_grid(
                 cell_inner += (
                     f'<div class="threshold" style="bottom:{thr_pct:.1f}%" '
                     f'title="Потолок сегодня: {fmt_int(weekly_threshold)} токенов '
-                    f'(weekly cap {fmt_int(WEEKLY_CAP_TOKENS)})">'
+                    f'(weekly cap {fmt_int(weekly_cap)})">'
                     f'<span class="threshold-label">{thr_label}</span>'
                     f'</div>'
                 )
@@ -620,9 +619,13 @@ def render(snapshot: dict) -> str:
         window_time = f"{window['label']}, сегодня"
 
     # ---- weekly grid (linear + log) ----
-    linear_grid = _render_weekly_grid(weeks, "linear", y_max, weekly_threshold, now_msk=now_msk)
+    linear_grid = _render_weekly_grid(
+        weeks, "linear", y_max, weekly_threshold, weekly_cap=weekly["cap"], now_msk=now_msk,
+    )
     log_grid = (
-        _render_weekly_grid(weeks, "log", log_info, weekly_threshold, now_msk=now_msk) if log_info else ""
+        _render_weekly_grid(
+            weeks, "log", log_info, weekly_threshold, weekly_cap=weekly["cap"], now_msk=now_msk,
+        ) if log_info else ""
     )
     axis_linear = _axis_labels_linear(y_max)
     axis_log = _axis_labels_log(log_info)
@@ -664,7 +667,7 @@ def render(snapshot: dict) -> str:
     # === ниже — старая логика render_html до return (читает локалы выше).
     # Оставляем её без изменений: derived переменные (cur_time, today_time,
     # linear_grid, log_grid, axis_linear, axis_log, log_meta_range,
-    # peak_meta, stream_total, hero_pills, WEEKLY_CAP_TOKENS, fmt_*) уже
+    # peak_meta, stream_total, hero_pills, fmt_*) уже
     # доступны. ===
 
     # Шапка weekly-карточки использует текущий недельный лейбл; в старом коде
@@ -1312,7 +1315,7 @@ def render(snapshot: dict) -> str:
       <div class="chart-head">
         <p class="eyebrow">Weekly Compare</p>
         <div class="chart-meta">
-          <span class="week-cap-pill" title="Недельный лимит расхода токенов">Порог недели: <strong>{fmt_tokens(WEEKLY_CAP_TOKENS)}</strong></span>
+          <span class="week-cap-pill" title="Недельный лимит расхода токенов">Порог недели: <strong>{fmt_tokens(weekly["cap"])}</strong></span>
           <span class="chart-meta__variant chart-meta__linear">
             Шкала: 0 … {fmt_int(y_max)} токенов
           </span>

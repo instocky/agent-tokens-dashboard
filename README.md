@@ -125,7 +125,8 @@ first; the script assumes milliseconds.
 | `--quiet`     | `false`                              | Suppress build log               |
 
 Constants (timezone offset, slot table, week count, **weekly cap**)
-live at the top of `build_dashboard.py` as module-level constants.
+live at the top of `analytics.py` as module-level constants — entry
+reads them only via the snapshot it receives from `build_snapshot`.
 
 ---
 

@@ -84,7 +84,7 @@ def main() -> int:
         f"ISO W-{now_msk.isocalendar()[1]}  weekday={now_msk.isocalendar()[2]}")
     log(f"[build] since = {weekly['since']} (Monday of W-{weekly['since'].isocalendar()[1]})")
     log(
-        f"[build] weekly_cap={analytics.WEEKLY_CAP_TOKENS}  "
+        f"[build] weekly_cap={weekly['cap']}  "
         f"today_spent={weekly['today_spent']}  days_left={weekly['days_left']}  "
         f"threshold={weekly['threshold']}"
     )
