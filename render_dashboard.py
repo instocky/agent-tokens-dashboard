@@ -1162,10 +1162,8 @@ def render(snapshot: dict) -> str:
       position: absolute; top: 5px; left: 0; right: 0;
       z-index: 1;
       text-align: center;
-      # color: var(--muted);
       color: #e6ebf6;
       font-size: 14px;
-      # font: 600 11px/1 var(--font);
       letter-spacing: 0.02em;
       pointer-events: none;
     }}
