@@ -20,7 +20,7 @@ from analytics import (  # noqa: E402
     WEEKLY_CAP_TOKENS,
     compute_weekly_threshold,
 )
-from build_dashboard import _render_weekly_grid  # noqa: E402  (Step 2: render)
+from render_dashboard import _render_weekly_grid  # noqa: E402
 
 
 # ---- compute_weekly_threshold (чистая логика) -----------------------------

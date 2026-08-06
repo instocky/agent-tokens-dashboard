@@ -189,12 +189,24 @@ and without a persistent process in memory.
 ## Project layout
 
 ```
-build_dashboard.py               # the only script — open/read/aggregate/render
+build_dashboard.py               # entry: CLI + main(); calls analytics.build_snapshot
+                                 # → render_dashboard.render(snapshot). No business logic
+                                 # (ADR-001 v2.1 rule 3: entry only orchestrates).
+render_dashboard.py              # render(snapshot) -> HTML; all _render_* helpers, GITHUB_PALETTE,
+                                 # pill functions. Imports only constants, types, fmt_* from
+                                 # analytics (rule 8: render → analytics однонаправленный).
+analytics.py                     # Database Access + Business Logic + Formatting + Snapshot Builder
+                                 # (build_snapshot per ADR §2.4). Pill level вычисляется здесь и
+                                 # пробрасывается в snapshot (weekly.day_level, session.level).
 tests/                           # unit tests, no pytest — run each file directly
   test_windows.py                # 4 — slot boundaries (day/night, midnight wrap)
-  test_log_scale.py              # 11 — linear/log, week-total, localStorage script
+  test_log_scale.py              # 13 — linear/log, week-total, localStorage script
   test_weekly_cap.py             # 15 — compute_weekly_threshold + render
   test_24h_stream.py             # 15 — compute_today_24h + intensity quartiles + state machine
+  test_hero_pill.py              # 37 — pill_level + _render_hero_pill + _build_hero_pill_inner
+                                 # + _render_combined_session_pill (level passed explicitly)
+  test_today_meta.py             # 16 — compute_today_meta
+  test_session_title.py          # 14 — _fetch_session_title
 concepts/                        # design exploration v2 — 4 visual directions
                                  # (concept-ops chosen for production; others retained)
 demo_24h.py                      # synthetic-data renderer for the 24H card;
@@ -202,8 +214,9 @@ demo_24h.py                      # synthetic-data renderer for the 24H card;
                                  # "yesterday 14:00" dataset for visual review
 refresh-dashboard.cmd            # one-click Windows rebuild helper (Explorer / taskbar)
 prd-token-dashboard-prototype.md # spec (PRD)
+adr-0806.md                      # ADR-001 v2.1: трёхслойное разделение analytics/render/entry
 dashboard.html                   # generated output (gitignored, regenerated on run)
-tmp/                             # demo artefacts (gitignored)
+tmp/                             # demo artefacts + commit-msg drafts (gitignored)
 runtime-state.sqlite             # the agent's local DB (gitignored, 446MB on this box)
 ```
 

@@ -1,14 +1,15 @@
-"""demo_24h.py — render dashboard.html с подменённой датой/данными для визуальной проверки.
+"""demo_24h.py — render dashboard.html с подменённым снимком данных для визуальной проверки.
 
-Использует ТОТ ЖЕ render_html из build_dashboard.py, но подсовывает синтетический
-hourly-словарь «вчера, 14:00, с распределённой нагрузкой по часам». Это позволяет
-увидеть, как карточка «Today · 24H Stream» выглядит с настоящим разнообразием
-состояний (active, current, peak, empty, future), без необходимости ждать конца дня.
+Использует ТОТ ЖЕ render(snapshot) из render_dashboard.py, но подсовывает
+синтетический snapshot «вчера, 14:00, с распределённой нагрузкой по часам».
+Это позволяет увидеть, как карточка «Today · 24H Stream» выглядит с
+настоящим разнообразием состояний (active, current, peak, empty, future),
+без необходимости ждать конца дня.
 
-Подход: патчим build_dashboard.datetime.now(MSK), чтобы вернуть фиктивный
-«сейчас» (2026-08-03 14:00 MSK). Затем собираем synthetic hourly, прогоняем
-тот же pipeline main() (с импортом функций вместо повторного кода), пишем
-tmp/dashboard_demo.html.
+Подход: собираем синтетический hourly-словарь, прогоняем через те же
+compute_* функции, что и analytics.build_snapshot, склеиваем snapshot
+dict по контракту ADR §2.4 и передаём в render_dashboard.render(snapshot).
+Никаких monkey-patch и SQLite — synthetic pipeline целиком в памяти.
 
 Запуск:  python demo_24h.py
 Выход:   tmp/dashboard_demo.html
@@ -16,12 +17,11 @@ tmp/dashboard_demo.html.
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import build_dashboard as bd  # noqa: E402
 from analytics import (  # noqa: E402
     MSK,
     WEEK_COUNT,
@@ -31,22 +31,16 @@ from analytics import (  # noqa: E402
     compute_prev_day_today,
     compute_prev_hour,
     compute_prev_window_total,
-    compute_sparkline_current,
-    compute_sparkline_today,
-    compute_sparkline_window,
     compute_today,
     compute_today_24h,
     compute_weekly,
     compute_weekly_threshold,
     current_window,
     fmt_delta_pct,
+    pill_level,
     today_24h_peak,
 )
-from build_dashboard import (  # noqa: E402  (render-side, Step 2: render_dashboard)
-    render_html,
-    _y_max_for,
-    _y_ticks_for_log,
-)
+import render_dashboard  # noqa: E402
 
 # ---- 1. Фиктивный «сейчас» --------------------------------------------------
 
@@ -111,23 +105,17 @@ WEEKLY_PATTERN |= {
     (date(2026, 8, 2),  h): int(v * 1.0) for h, v in HOURLY_PATTERN.items()
 }
 
-# ---- 3. Прогон pipeline (тот же, что в main, но без CLI/args) -------------
+# ---- 3. Сборка snapshot по контракту §2.4 ADR ------------------------------
 
-# NB: monkey-patch datetime.now() НЕ нужен — все compute_* функции принимают
-# now_msk параметром, и мы передаём DEMO_NOW явно. main() в build_dashboard
-# сама вызывает datetime.now(MSK) (потому что это entry-point), а мы повторяем
-# её логику, подменяя только now_msk.
+def _build_demo_snapshot() -> dict:
+    """Собрать snapshot-дискт из синтетического hourly, по тому же контракту
+    что analytics.build_snapshot (ADR §2.4).
 
-def main() -> int:
-    # Re-import после monkey-patch (модули уже импортированы, но пересоберём,
-    # чтобы гарантированно использовать подменённые datetime/date).
-    # На самом деле bd.* уже подменены, и весь код, который вызывает datetime.now()
-    # через `bd.datetime.now()` или `datetime.now(MSK)` (top-level import),
-    # получит DEMO_NOW — НО в build_dashboard.py datetime.now(MSK) импортирован
-    # как `from datetime import date, datetime, timedelta, timezone` — а это
-    # from-import, monkey-patch НЕ подменяет.
-    # Решение: явно пересчитаем всё, что зависит от now_msk, руками.
-
+    Демо-данные, для которых нет синтетического эквивалента (DB-side:
+    today_meta, current_session) — подобраны как realistic-кейс. Это явно
+    «демо», а не реальные данные; см. комментарии в build_snapshot в
+    analytics.py для прод-пути.
+    """
     today = DEMO_TODAY
     now_msk = DEMO_NOW
 
@@ -136,7 +124,6 @@ def main() -> int:
     current_monday = today - timedelta(days=iso[2] - 1)
     since = current_monday - timedelta(weeks=WEEK_COUNT - 1)
 
-    # Синтетические hourly — не открываем SQLite. Передаём напрямую.
     hourly = WEEKLY_PATTERN
 
     current_hour_tokens = compute_current_hour(hourly, today)
@@ -145,15 +132,12 @@ def main() -> int:
     window_wraps = current_window(now_msk)["wraps"]
     weeks = compute_weekly(hourly, today)
 
-    spark_current = compute_sparkline_current(hourly, now_msk)
-    spark_today = compute_sparkline_today(hourly, now_msk)
-    spark_window = compute_sparkline_window(window_entries)
     prev_hour = compute_prev_hour(hourly, now_msk)
     prev_day = compute_prev_day_today(hourly, now_msk)
     prev_window = compute_prev_window_total(hourly, now_msk)
 
-    y_max = _y_max_for(weeks)
-    log_info = _y_ticks_for_log(weeks)
+    y_max = render_dashboard._y_max_for(weeks)
+    log_info = render_dashboard._y_ticks_for_log(weeks)
 
     current_week = weeks[-1]
     today_idx = now_msk.weekday()
@@ -176,53 +160,89 @@ def main() -> int:
     avg_tokens_per_session: int | None = (
         int(today_tokens / today_sessions) if today_sessions > 0 else None
     )
+
     # Демо-данные для current_session (используются в hero-pill'е сессии).
     # В demo БД не открываем, synthetic значения подобраны под реалистичный
     # случай: текущая сессия в работе, 50K токенов, 5 запросов.
+    # NB: title/record_title/duration_ms ставим None — это сохраняет
+    # byte-identity с пре-рефакторным demo, который не передавал эти kwargs
+    # (default None в старом render_html). path оставляем — раньше demo
+    # задавал его вручную для tooltip. Если захочется показывать проект/путь
+    # в demo — отдельный коммит и обновить эталон tmp/dashboard_demo.html.
     current_session_tokens = 50_000
     current_session_requests = 5
     current_session_path = "C:/Projects/demo-project"
+    current_session_title = None
+    current_session_record_title = None
+    current_session_duration_ms = None
 
-    html = render_html(
-        current_hour_tokens=current_hour_tokens,
-        current_hour_delta=fmt_delta_pct(current_hour_tokens, prev_hour),
-        current_hour_sparkline=spark_current,
-        today_tokens=today_tokens,
-        today_delta=fmt_delta_pct(today_tokens, prev_day),
-        today_sparkline=spark_today,
-        today_sessions=today_sessions,
-        today_user_requests=today_user_requests,
-        today_avg=today_avg,
-        avg_tokens_per_session=avg_tokens_per_session,
-        window_total=window_total,
-        window_delta=fmt_delta_pct(window_total, prev_window),
-        window_sparkline=spark_window,
-        window_label=window_label,
-        window_wraps=window_wraps,
-        weeks=weeks,
-        y_max=y_max,
-        log_info=log_info,
-        weekly_threshold=weekly_threshold,
-        today_24h=today_24h_bars,
-        today_24h_peak=today_24h_peak_val,
-        current_session_tokens=current_session_tokens,
-        current_session_requests=current_session_requests,
-        current_session_path=current_session_path,
-        now_msk=now_msk,
-    )
+    snapshot = {
+        "now_msk": now_msk,
+        "hour": {"tokens": current_hour_tokens},
+        "today": {
+            "tokens": today_tokens,
+            "sessions": today_sessions,
+            "user_requests": today_user_requests,
+            "avg": today_avg,
+            "avg_tokens_per_session": avg_tokens_per_session,
+            "bars_24h": today_24h_bars,
+            "peak_24h": today_24h_peak_val,
+        },
+        "window": {
+            "total": window_total,
+            "entries": window_entries,
+            "label": window_label,
+            "wraps": window_wraps,
+        },
+        "weekly": {
+            "since": since,
+            "weeks": weeks,
+            "cap": WEEKLY_CAP_TOKENS,
+            "today_spent": today_spent,
+            "days_left": days_left,
+            "threshold": weekly_threshold,
+            "day_level": pill_level(today_spent, weekly_threshold),
+        },
+        "session": {
+            "id": "demo-session",
+            "tokens": current_session_tokens,
+            "requests": current_session_requests,
+            "path": current_session_path,
+            "project_title": current_session_title,
+            "record_title": current_session_record_title,
+            "duration_ms": current_session_duration_ms,
+            "level": pill_level(current_session_tokens, avg_tokens_per_session),
+        },
+    }
+    # Suppress unused — prev_* derived values are part of the old render_html
+    # signature; render(snapshot) doesn't need them at module top-level, but
+    # we keep the calls so demo's data flow mirrors analytics.build_snapshot.
+    _ = (prev_hour, prev_day, prev_window, y_max, log_info, fmt_delta_pct)
+    return snapshot
+
+
+def main() -> int:
+    snapshot = _build_demo_snapshot()
+    html = render_dashboard.render(snapshot)
 
     out_path = Path(__file__).resolve().parent / "tmp" / "dashboard_demo.html"
     out_path.parent.mkdir(exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
+    today = snapshot["today"]
     print(f"[demo] wrote {out_path} ({len(html):,} bytes)")
-    print(f"[demo] DEMO_NOW = {DEMO_NOW}")
-    print(f"[demo] today_24h peak = {today_24h_peak_val}")
-    print(f"[demo] today_24h bars: "
-          f"active={sum(1 for b in today_24h_bars if b.state == 'active')}, "
-          f"current={sum(1 for b in today_24h_bars if b.state == 'current')}, "
-          f"peak={sum(1 for b in today_24h_bars if b.state == 'peak')}, "
-          f"empty={sum(1 for b in today_24h_bars if b.state == 'empty')}, "
-          f"future={sum(1 for b in today_24h_bars if b.state == 'future')}")
+    print(f"[demo] DEMO_NOW = {snapshot['now_msk']}")
+    if today["peak_24h"] is not None:
+        ph, pv = today["peak_24h"]
+        print(f"[demo] today_24h peak = ({ph}, {pv})")
+    bars = today["bars_24h"]
+    print(
+        f"[demo] today_24h bars: "
+        f"active={sum(1 for b in bars if b.state == 'active')}, "
+        f"current={sum(1 for b in bars if b.state == 'current')}, "
+        f"peak={sum(1 for b in bars if b.state == 'peak')}, "
+        f"empty={sum(1 for b in bars if b.state == 'empty')}, "
+        f"future={sum(1 for b in bars if b.state == 'future')}"
+    )
     return 0
 
 

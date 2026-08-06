@@ -16,7 +16,7 @@ from analytics import (  # noqa: E402
     Week,
     WEEKDAY_LABELS,
 )
-from build_dashboard import (  # noqa: E402  (Step 2: render)
+from render_dashboard import (  # noqa: E402
     _y_ticks_for_log,
     _render_weekly_grid,
 )
