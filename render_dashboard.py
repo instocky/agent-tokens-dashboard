@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import html
 import math
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 # Импорты из analytics — допустимые по §2.2 rule 8 ADR (константы, типы,
 # форматтеры). НЕ импортируем compute-функции, DB-доступ и `pill_level`.
@@ -159,7 +159,8 @@ def _axis_labels_log(log_info) -> str:
 
 
 def _render_weekly_grid(
-    weeks: list[Week], scale: str, y_info, weekly_threshold: int | None = None
+    weeks: list[Week], scale: str, y_info, weekly_threshold: int | None = None,
+    *, now_msk: datetime,
 ) -> str:
     """HTML-грид 4 недели × 7 дней. Недели — колонки, дни — бары.
 
@@ -178,10 +179,15 @@ def _render_weekly_grid(
     не рисуется. Если today_spent > threshold, бар визуально выше линии —
     это и есть сигнал «превысил, на завтра уровень пересчитается».
 
+    `now_msk` — MSK-якорь из snapshot (ADR §2.4 / §6.4). Раньше здесь стоял
+    `date.today()` (локальная TZ машины) — это был TD-2: на хостах с TZ ≠ MSK
+    «сегодня» в гриде раскалывалось с реальным MSK-днём. Теперь «сегодня»
+    едет из snapshot вместе со всем остальным временным контекстом билда.
+
     Высота — % от 260px контейнера (через _bar_height_pct).
     В шапке карточки — W-лэйбл слева + суммарный объём за неделю в M справа.
     """
-    today_d = date.today()
+    today_d = now_msk.date()
     out: list[str] = []
     for week in weeks:
         bars: list[str] = []
@@ -614,9 +620,9 @@ def render(snapshot: dict) -> str:
         window_time = f"{window['label']}, сегодня"
 
     # ---- weekly grid (linear + log) ----
-    linear_grid = _render_weekly_grid(weeks, "linear", y_max, weekly_threshold)
+    linear_grid = _render_weekly_grid(weeks, "linear", y_max, weekly_threshold, now_msk=now_msk)
     log_grid = (
-        _render_weekly_grid(weeks, "log", log_info, weekly_threshold) if log_info else ""
+        _render_weekly_grid(weeks, "log", log_info, weekly_threshold, now_msk=now_msk) if log_info else ""
     )
     axis_linear = _axis_labels_linear(y_max)
     axis_log = _axis_labels_log(log_info)

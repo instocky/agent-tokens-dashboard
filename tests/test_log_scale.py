@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 # Чтобы import работал и при запуске из корня, и из tests/.
@@ -15,11 +15,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analytics import (  # noqa: E402
     Week,
     WEEKDAY_LABELS,
+    MSK,
 )
 from render_dashboard import (  # noqa: E402
     _y_ticks_for_log,
     _render_weekly_grid,
 )
+
+
+# TD-2 (ADR §6.4): _render_weekly_grid теперь принимает now_msk.
+# Текущая неделя в _make_weeks — W-31 (Mon 2026-08-03). Берём Ср 2026-08-05,
+# чтобы Mon/Tue W-31 были .bar.history, Wed — .bar.accent, Thu–Sun — .bar.future.
+NOW_MSK = datetime(2026, 8, 5, 12, 0, 0, tzinfo=MSK)
 
 
 def _make_weeks(specs: list[list[int | None]]) -> list[Week]:
@@ -89,7 +96,7 @@ def test_render_weekly_grid_linear_smoke() -> None:
         [8_000_000, 9_000_000, 6_500_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
         [14_000_000, 17_000_000, 26_000_000, 4_000_000, 13_000_000, 11_000_000, 9_000_000],
     ])
-    html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    html = _render_weekly_grid(weeks, "linear", 27_000_000, now_msk=NOW_MSK)
     assert "W-30" in html
     assert "W-31" in html
     assert 'class="week' in html
@@ -109,10 +116,10 @@ def test_render_weekly_grid_log_smoke() -> None:
     ])
     log_info = _y_ticks_for_log(weeks)
     assert log_info is not None
-    html = _render_weekly_grid(weeks, "log", log_info)
+    html = _render_weekly_grid(weeks, "log", log_info, now_msk=NOW_MSK)
     # В log шкале диапазон 9M..26M сжимается (оба в одной декаде),
     # поэтому 9M (второй бар) должен быть ВЫШЕ, чем в linear (где 26M = 100%).
-    linear_html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    linear_html = _render_weekly_grid(weeks, "linear", 27_000_000, now_msk=NOW_MSK)
     import re
     def _h(s: str, day: str) -> float:
         m = re.search(rf'class="bar (?:history|accent)" style="height:([\d.]+)%" title="[^"]*, {day}: ', s)
@@ -127,7 +134,7 @@ def test_render_weekly_grid_current_week_accent() -> None:
         [8_000_000] * 7,  # past
         [9_000_000] * 7,  # current (is_current=True)
     ])
-    html = _render_weekly_grid(weeks, "linear", 10_000_000)
+    html = _render_weekly_grid(weeks, "linear", 10_000_000, now_msk=NOW_MSK)
     assert 'class="week current"' in html
     assert html.count('class="week current"') == 1
 
@@ -137,14 +144,14 @@ def test_render_weekly_grid_none_day_title() -> None:
     weeks = _make_weeks([
         [None, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
     ])
-    html = _render_weekly_grid(weeks, "linear", 20_000_000)
+    html = _render_weekly_grid(weeks, "linear", 20_000_000, now_msk=NOW_MSK)
     assert 'class="bar future"' in html
     assert "нет данных" in html
     # 0-day НЕ должен получить future-стиль; это history с height=0%.
     weeks2 = _make_weeks([
         [0, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
     ])
-    html2 = _render_weekly_grid(weeks2, "linear", 20_000_000)
+    html2 = _render_weekly_grid(weeks2, "linear", 20_000_000, now_msk=NOW_MSK)
     # Понедельник с 0 → history (не future), height=0% (CSS min-height даст 6px)
     assert 'class="bar history" style="height:0.0%"' in html2
     assert 'W-30, Пн: 0' in html2
@@ -162,7 +169,7 @@ def test_render_weekly_grid_week_total() -> None:
         # current week: 5 non-None дней (Сб/Вс None) = 74M
         [14_000_000, 17_000_000, 26_000_000, 4_000_000, 13_000_000, None, None],
     ])
-    html = _render_weekly_grid(weeks, "linear", 27_000_000)
+    html = _render_weekly_grid(weeks, "linear", 27_000_000, now_msk=NOW_MSK)
     import re
     totals = re.findall(
         r'<span class="week-total" title="[^"]+">([\d.]+M)</span>', html
@@ -177,7 +184,7 @@ def test_render_weekly_grid_week_total_all_none() -> None:
     weeks = _make_weeks([
         [None] * 7,
     ])
-    html = _render_weekly_grid(weeks, "linear", 1_000_000)
+    html = _render_weekly_grid(weeks, "linear", 1_000_000, now_msk=NOW_MSK)
     assert '<span class="week-total" title="Сумма за W-30">0.00M</span>' in html
 
 
