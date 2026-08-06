@@ -588,89 +588,6 @@ def today_24h_peak(bars: list[HourlyBar]) -> tuple[int, int] | None:
     return None
 
 
-def compute_sparkline_current(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
-) -> list[int]:
-    """Sparkline для KPI «Текущий момент»: последние до 8 часов (h-7..h) сегодня.
-
-    Если now.hour < 7, начинаем с 00:00 — будет короче 8 точек, что ок
-    (полилиния рендерится с тем количеством точек, что есть).
-    """
-    today = now_msk.date()
-    h = now_msk.hour
-    start = max(0, h - 7)
-    return [hourly.get((today, hr), 0) for hr in range(start, h + 1)]
-
-
-def compute_sparkline_today(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
-) -> list[int]:
-    """Sparkline для KPI «Сегодня»: часы 00:00..h сегодня (running series)."""
-    today = now_msk.date()
-    h = now_msk.hour
-    return [hourly.get((today, hr), 0) for hr in range(h + 1)]
-
-
-def compute_sparkline_window(
-    window_entries: list[tuple[int, int, date]],
-) -> list[int]:
-    """Sparkline для KPI «Рабочее время»: почасовые значения активного слота.
-
-    Порядок соответствует порядку entries (для ночного 23, 0, 1, 2;
-    для дневных — по возрастанию). 4-5 точек.
-    """
-    return [v for _, v, _ in window_entries]
-
-
-def compute_prev_hour(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
-) -> int | None:
-    """Токены за предыдущий час (h-1). На границе суток — вчерашний 23:00."""
-    h = now_msk.hour
-    today = now_msk.date()
-    if h == 0:
-        return hourly.get((today - timedelta(days=1), 23))
-    return hourly.get((today, h - 1))
-
-
-def compute_prev_day_today(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
-) -> int | None:
-    """Вчерашний running-total до того же часа (00:00..h включительно)."""
-    yesterday = now_msk.date() - timedelta(days=1)
-    h = now_msk.hour
-    return sum(hourly.get((yesterday, hr), 0) for hr in range(h + 1))
-
-
-def compute_prev_window_total(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
-) -> int:
-    """Токены за предыдущий 5h-интервал (тот, что был до текущего слота).
-
-    Соседство слотов:
-      morning ← night   (ночной оборачивает полночь: 23 вчера + 0,1,2 сегодня)
-      midday  ← morning
-      afternoon ← midday
-      evening ← afternoon
-      night   ← evening (предыдущий вечер — это вчерашний 18..22)
-    """
-    cur = current_window(now_msk)
-    today = now_msk.date()
-    yesterday = today - timedelta(days=1)
-    name = cur["name"]
-    if name == "morning":
-        return (
-            hourly.get((yesterday, 23), 0)
-            + sum(hourly.get((today, hr), 0) for hr in (0, 1, 2))
-        )
-    if name == "night":
-        return sum(hourly.get((yesterday, hr), 0) for hr in (18, 19, 20, 21, 22))
-    # Дневные слоты: предыдущий слот — целиком сегодня.
-    idx = next(i for i, w in enumerate(WINDOWS) if w["name"] == name)
-    prev_slot = WINDOWS[idx - 1]
-    return sum(hourly.get((today, hr), 0) for hr in prev_slot["hours"])
-
-
 def project_title_from_path(path: str | None) -> str | None:
     """Извлекает короткое имя проекта из workspace-пути.
 
@@ -781,20 +698,6 @@ def fmt_avg(value: float) -> str:
 def fmt_int(n: int | None) -> str:
     """Без K/M, для осей и лейблов."""
     return "—" if n is None else f"{n:,}".replace(",", " ")
-
-
-def fmt_delta_pct(curr: int, prev: int | None) -> str | None:
-    """'+8%' / '−3%' / None если нет baseline (prev None или 0).
-
-    Используется для бейджа .delta на KPI-карточках. None означает "без бейджа".
-    Используем минус U+2212, не дефис — чтобы не лип к цифре в шрифтах.
-    """
-    if prev is None or prev <= 0:
-        return None
-    pct = (curr - prev) / prev * 100
-    if pct >= 0:
-        return f"+{pct:.0f}%"
-    return f"−{abs(pct):.0f}%"
 
 
 def fmt_duration(ms: int | None) -> str:

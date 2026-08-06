@@ -28,15 +28,11 @@ from analytics import (  # noqa: E402
     WEEKLY_CAP_TOKENS,
     compute_current_hour,
     compute_current_window,
-    compute_prev_day_today,
-    compute_prev_hour,
-    compute_prev_window_total,
     compute_today,
     compute_today_24h,
     compute_weekly,
     compute_weekly_threshold,
     current_window,
-    fmt_delta_pct,
     pill_level,
     today_24h_peak,
 )
@@ -132,13 +128,6 @@ def _build_demo_snapshot() -> dict:
     window_wraps = current_window(now_msk)["wraps"]
     weeks = compute_weekly(hourly, today)
 
-    prev_hour = compute_prev_hour(hourly, now_msk)
-    prev_day = compute_prev_day_today(hourly, now_msk)
-    prev_window = compute_prev_window_total(hourly, now_msk)
-
-    y_max = render_dashboard._y_max_for(weeks)
-    log_info = render_dashboard._y_ticks_for_log(weeks)
-
     current_week = weeks[-1]
     today_idx = now_msk.weekday()
     today_spent = current_week.days[today_idx] or 0
@@ -214,10 +203,6 @@ def _build_demo_snapshot() -> dict:
             "level": pill_level(current_session_tokens, WEEKLY_CAP_TOKENS),
         },
     }
-    # Suppress unused — prev_* derived values are part of the old render_html
-    # signature; render(snapshot) doesn't need them at module top-level, but
-    # we keep the calls so demo's data flow mirrors analytics.build_snapshot.
-    _ = (prev_hour, prev_day, prev_window, y_max, log_info, fmt_delta_pct)
     return snapshot
 
 
