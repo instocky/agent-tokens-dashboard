@@ -23,7 +23,7 @@ Task Scheduler trigger.
 - Marks future days and days with no logged rows as `disabled` (dashed), not as zero
 - Shows a **weekly cap threshold** on the current day: a red dashed line with
   a "порог N.NNM" label marking today's spend ceiling, so the weekly cap
-  (default 75M tokens) holds across the remaining days of the week. If you
+  (default 60M tokens) holds across the remaining days of the week. If you
   blow past the line, the level auto-recalculates for the next day (formula
   re-evaluates with new `today_spent` / `days_left`).
 
@@ -214,7 +214,8 @@ demo_24h.py                      # synthetic-data renderer for the 24H card;
                                  # "yesterday 14:00" dataset for visual review
 refresh-dashboard.cmd            # one-click Windows rebuild helper (Explorer / taskbar)
 prd-token-dashboard-prototype.md # spec (PRD)
-adr-0806.md                      # ADR-001 v2.1: трёхслойное разделение analytics/render/entry
+adr-0806.md                      # ADR-001 v2.2: трёхслойное разделение analytics/render/entry
+                                 # (v2.2 уточнил §2.4.1: session.level cap = WEEKLY_CAP_TOKENS)
 dashboard.html                   # generated output (gitignored, regenerated on run)
 tmp/                             # demo artefacts + commit-msg drafts (gitignored)
 runtime-state.sqlite             # the agent's local DB (gitignored, 446MB on this box)
