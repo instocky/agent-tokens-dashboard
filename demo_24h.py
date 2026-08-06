@@ -172,6 +172,16 @@ def main() -> int:
     today_sessions = 2
     today_user_requests = 7
     today_avg = 3.5
+    # avg_tokens_per_session — производное от today_tokens/sessions, как в main().
+    avg_tokens_per_session: int | None = (
+        int(today_tokens / today_sessions) if today_sessions > 0 else None
+    )
+    # Демо-данные для current_session (используются в hero-pill'е сессии).
+    # В demo БД не открываем, synthetic значения подобраны под реалистичный
+    # случай: текущая сессия в работе, 50K токенов, 5 запросов.
+    current_session_tokens = 50_000
+    current_session_requests = 5
+    current_session_path = "C:/Projects/demo-project"
 
     html = render_html(
         current_hour_tokens=current_hour_tokens,
@@ -183,6 +193,7 @@ def main() -> int:
         today_sessions=today_sessions,
         today_user_requests=today_user_requests,
         today_avg=today_avg,
+        avg_tokens_per_session=avg_tokens_per_session,
         window_total=window_total,
         window_delta=fmt_delta_pct(window_total, prev_window),
         window_sparkline=spark_window,
@@ -194,6 +205,9 @@ def main() -> int:
         weekly_threshold=weekly_threshold,
         today_24h=today_24h_bars,
         today_24h_peak=today_24h_peak_val,
+        current_session_tokens=current_session_tokens,
+        current_session_requests=current_session_requests,
+        current_session_path=current_session_path,
         now_msk=now_msk,
     )
 
