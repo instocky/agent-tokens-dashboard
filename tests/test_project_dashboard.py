@@ -29,8 +29,10 @@ from build_project_dashboard import (  # noqa: E402
     collect_projects,
     compute_window,
     format_duration,
+    format_rate,
     format_tokens,
     project_from_workspace,
+    rate_sort_value,
     render_html,
 )
 
@@ -193,6 +195,67 @@ def test_format_duration() -> None:
             failures.append(f"  {ms}: got {got!r}, expected {expected!r}")
     if failures:
         raise AssertionError("format_duration failures:\n" + "\n".join(failures))
+
+
+# ---- format_rate / rate_sort_value ----------------------------------------
+
+def test_format_rate() -> None:
+    """Display: K/M/h precision (тот же, что format_tokens), < 1m duration → "—".
+
+    Cases подобраны под реалистичные значения из project dashboard:
+      - мелкие rate (sub-1K) → "<N>/h" без суффикса
+      - K-шкала (1K..999K) → 1dp ("335.7K/h")
+      - M-шкала (1M..999M) → 2dp ("1.5M/h")
+      - B-шкала (1B+) → 2dp (для project-уровня нереалистично, но контракт должен держаться)
+    """
+    cases = [
+        # (tokens, duration_ms, expected_display)
+        (0, 3_600_000, "0/h"),                  # 0 tokens / 1h
+        (200, 1_800_000, "400/h"),              # 200 / 30m = 400/h
+        (1_000, 60_000, "60K/h"),               # ровно 1m duration (граница) — rate=1_000 * 60 = 60K
+        (1_500_000, 3_600_000, "1.5M/h"),       # 1.5M / 1h
+        (1_500_000, 7_200_000, "750K/h"),       # 1.5M / 2h = 750K
+        (9_400_000, 100_800_000, "335.7K/h"),   # 9.4M / 28h ≈ 335_714/h
+        (18_270_000, 67_020_000, "981.4K/h"),   # 18.27M / 18.617h ≈ 981_379/h (1dp rounds up)
+        (1_500_000_000, 3_600_000, "1.5B/h"),   # B-шкала, для project нереалистично, но контракт
+        (0, 30_000, "—"),                       # < 1m → "—"
+        (1_000, 30_000, "—"),                   # 1K tokens / 30s → было бы "120K/h" (misleading) → "—"
+        (1_000, 59_999, "—"),                   # 59_999 ms (граница чуть ниже 1m)
+        (-100, 3_600_000, "0/h"),               # отрицательные → 0 через format_tokens
+    ]
+    failures: list[str] = []
+    for tokens, ms, expected in cases:
+        got = format_rate(tokens, ms)
+        if got != expected:
+            failures.append(
+                f"  ({tokens}, {ms}ms): got {got!r}, expected {expected!r}"
+            )
+    if failures:
+        raise AssertionError("format_rate failures:\n" + "\n".join(failures))
+
+
+def test_rate_sort_value() -> None:
+    """Raw int для client-side сортировки. < 1m → 0."""
+    cases = [
+        # (tokens, duration_ms, expected_raw)
+        (1_500_000, 3_600_000, 1_500_000),      # 1.5M / 1h
+        (1_500_000, 7_200_000, 750_000),        # 1.5M / 2h
+        (9_400_000, 100_800_000, 335_714),      # 9.4M / 28h (rounded)
+        (200, 1_800_000, 400),                  # 200 / 30m = 400
+        (0, 3_600_000, 0),                      # 0 tokens
+        (1_000, 30_000, 0),                     # < 1m → 0
+        (0, 0, 0),                              # edge: оба нули
+        (1_000, 59_999, 0),                     # edge: 59_999 ms
+    ]
+    failures: list[str] = []
+    for tokens, ms, expected in cases:
+        got = rate_sort_value(tokens, ms)
+        if got != expected:
+            failures.append(
+                f"  ({tokens}, {ms}ms): got {got!r}, expected {expected!r}"
+            )
+    if failures:
+        raise AssertionError("rate_sort_value failures:\n" + "\n".join(failures))
 
 
 # ---- collect_projects (integration через :memory: SQLite) -----------------
@@ -448,7 +511,7 @@ def test_collect_projects_broken_json() -> None:
 # ---- render_html (client-side sort contract) -------------------------------
 
 def test_render_html_has_sortable_headers() -> None:
-    """Все 5 <th> помечены class="sortable" + data-col + tabindex."""
+    """Все 6 <th> помечены class="sortable" + data-col + tabindex."""
     rows: list[ProjectRow] = [
         ProjectRow(
             project="alpha",
@@ -464,17 +527,19 @@ def test_render_html_has_sortable_headers() -> None:
     _, _, weeks = compute_window(now.date())
     html_doc = render_html(rows, now, weeks)
 
-    expected_cols = ["project", "last_update", "duration", "tokens", "sessions"]
+    expected_cols = ["project", "last_update", "duration", "tokens", "rate", "sessions"]
     for col in expected_cols:
         # Ищем <th ... data-col="<col>" ... class="sortable" ...>
         marker = f'data-col="{col}"'
         assert marker in html_doc, f"missing {marker}"
         # class="sortable" должен быть на каждом sortable <th>
         # (берём подстроку ровно вокруг нашего data-col, чтобы не словить ложный матч).
-        # Простая проверка: количество sortable th >= 5.
-        assert html_doc.count('class="sortable') >= 5, (
-            f"expected >= 5 sortable th, got {html_doc.count(chr(34)+'sortable')}"
+        # Простая проверка: количество sortable th >= 6.
+        assert html_doc.count('class="sortable') >= 6, (
+            f"expected >= 6 sortable th, got {html_doc.count(chr(34)+'sortable')}"
         )
+    # Заголовок rate: видимый лейбл "TOK/HOUR" (CSS uppercase от "Tok/Hour").
+    assert "Tok/Hour" in html_doc, "rate column header label 'Tok/Hour' missing"
 
 
 def test_render_html_has_data_sort_per_cell() -> None:
@@ -502,15 +567,49 @@ def test_render_html_has_data_sort_per_cell() -> None:
     tr_end = html_doc.find("</tr>", tr_start) + len("</tr>")
     tr = html_doc[tr_start:tr_end]
     # data-col атрибуты должны присутствовать на каждом <td>.
-    for col in ["project", "last_update", "duration", "tokens", "sessions"]:
+    for col in ["project", "last_update", "duration", "tokens", "rate", "sessions"]:
         assert f'data-col="{col}"' in tr, f"row missing data-col={col}"
     # Raw values, не formatted: duration=3600000 (не "1h"), tokens=1500000 (не "1.5M").
     assert 'data-sort="3600000"' in tr, f"row missing data-sort for duration; got: {tr}"
     assert 'data-sort="1500000"' in tr, f"row missing data-sort for tokens; got: {tr}"
+    # rate = 1_500_000 tokens / 1h = 1_500_000 per hour. Display "1.5M/h".
+    assert 'data-sort="1500000"' in tr, f"row missing data-sort for rate; got: {tr}"
+    assert ">1.5M/h<" in tr, f"row missing rate display '1.5M/h'; got: {tr}"
     assert 'data-sort="2"' in tr, f"row missing data-sort for sessions; got: {tr}"
     assert 'data-sort="2026-08-07"' in tr, f"row missing data-sort for last_update; got: {tr}"
     # project data-sort — без html.escape, но slug безопасный.
     assert 'data-sort="alpha"' in tr, f"row missing data-sort for project; got: {tr}"
+
+
+def test_render_html_rate_short_duration_is_dash() -> None:
+    """duration < 1m → ячейка rate показывает "—" с data-sort=0."""
+    rows: list[ProjectRow] = [
+        ProjectRow(
+            project="shorty",
+            last_update=date(2026, 8, 7),
+            max_ms=1_700_000_000_000,
+            duration_ms=30_000,        # 30s — ниже 1m порога
+            tokens=10_000,
+            sessions=1,
+            is_active=False,
+        ),
+    ]
+    now = datetime(2026, 8, 7, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    tbody_pos = html_doc.find("<tbody>")
+    tr_start = html_doc.find("<tr", tbody_pos)
+    tr_end = html_doc.find("</tr>", tr_start) + len("</tr>")
+    tr = html_doc[tr_start:tr_end]
+    # rate cell: display "—", data-sort "0".
+    assert 'data-col="rate"' in tr
+    # Должна быть ровно одна ячейка rate с data-sort="0" и текстом "—".
+    # Ищем подстроку <td ... data-col="rate" data-sort="0">—</td>.
+    assert 'data-col="rate" data-sort="0"' in tr, (
+        f"rate cell data-sort not 0 for short duration; got: {tr}"
+    )
+    assert ">—<" in tr, f"rate display not '—' for short duration; got: {tr}"
 
 
 def test_render_html_embeds_sort_script_and_storage_key() -> None:
@@ -556,6 +655,8 @@ def main() -> int:
         test_compute_window_sunday_end,
         test_format_tokens,
         test_format_duration,
+        test_format_rate,
+        test_rate_sort_value,
         test_collect_projects_groups_by_project,
         test_collect_projects_sort_most_recent_first,
         test_collect_projects_active_flag,
@@ -565,6 +666,7 @@ def main() -> int:
         test_collect_projects_broken_json,
         test_render_html_has_sortable_headers,
         test_render_html_has_data_sort_per_cell,
+        test_render_html_rate_short_duration_is_dash,
         test_render_html_embeds_sort_script_and_storage_key,
     ]
     passed = 0

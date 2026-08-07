@@ -379,6 +379,50 @@ def format_duration(ms: int) -> str:
     return f"{days}d {rem_h}h"
 
 
+# Минимальный duration, на котором rate per hour имеет смысл. Ниже —
+# экстраполяция с одного часа на минутный масштаб вводит в заблуждение
+# ("30M/h" при 200 токенах за 30 секунд). Показываем "—".
+RATE_MIN_DURATION_MS: int = 60_000
+
+
+def format_rate(tokens: int, duration_ms: int) -> str:
+    """Rate tokens/hour в человеческом формате: "1.23M/h", "335.7K/h", "400/h".
+
+    Контракт:
+      - duration_ms < RATE_MIN_DURATION_MS (== < 1 min) → "—". Rate per hour
+        на минутном масштабе не определён; см. rate_sort_value для пары.
+      - duration_ms >= RATE_MIN_DURATION_MS → "<format_tokens(rate)>/h",
+        где rate = round(tokens * 3_600_000 / duration_ms). format_tokens
+        даёт K/M/B precision (1dp/2dp/2dp) + trailing zero strip, тот же
+        контракт, что в колонке TOKENS.
+      - tokens=0 при duration > 0 → "0/h". Rate буквально нулевой, это
+        не edge case.
+      - Отрицательные токены (теоретически) → "0/h" через format_tokens.
+
+    NB: rate считается от SUM активной duration по сессиям проекта (то же
+    значение, что в колонке DURATION), а не от wall-clock между первой и
+    последней сессией. Для проекта с пятью короткими сессиями суммарно по
+    25 минут rate будет в 50+ раз выше, чем для проекта с одной сессией в
+    1h с тем же количеством токенов. Это "интенсивность", не throughput.
+    """
+    if duration_ms < RATE_MIN_DURATION_MS:
+        return "—"
+    rate = int(round(tokens * 3_600_000 / duration_ms))
+    return f"{format_tokens(rate)}/h"
+
+
+def rate_sort_value(tokens: int, duration_ms: int) -> int:
+    """Raw integer rate (tokens/hour) для client-side сортировки.
+
+    Возвращает 0 при duration < RATE_MIN_DURATION_MS — "нет данных"
+    сортируется в конец desc-таблицы и в начало asc-таблицы, что совпадает
+    с визуальной позицией "—" в колонке.
+    """
+    if duration_ms < RATE_MIN_DURATION_MS:
+        return 0
+    return int(round(tokens * 3_600_000 / duration_ms))
+
+
 # ---- render ----------------------------------------------------------------
 
 def render_html(
@@ -401,7 +445,8 @@ def render_html(
     # `data-col` + `data-sort` на каждом <td> — контракт для client-side
     # сортировки (см. <script> в render_html). Raw-значения в data-sort,
     # formatted-версии остаются в тексте ячейки ("1h 39m" → "5940000",
-    # "8.81M" → "8810000"). Это развязывает форматирование и сортировку.
+    # "8.81M" → "8810000", "1.23M/h" → "1230000"). Это развязывает
+    # форматирование и сортировку.
     body_rows: list[str] = []
     for r in rows:
         cls = ' class="active"' if r.is_active else ""
@@ -409,6 +454,8 @@ def render_html(
         date_esc = html.escape(r.last_update.isoformat())
         dur_esc = html.escape(format_duration(r.duration_ms))
         tok_esc = html.escape(format_tokens(r.tokens))
+        rate_esc = html.escape(format_rate(r.tokens, r.duration_ms))
+        rate_raw = rate_sort_value(r.tokens, r.duration_ms)
         sess_esc = str(int(r.sessions))
         badge = '<span class="badge">active</span>' if r.is_active else ""
 
@@ -421,11 +468,12 @@ def render_html(
             f"<td class=\"r\" data-col=\"last_update\" data-sort=\"{date_sort}\">{date_esc}</td>"
             f"<td class=\"r\" data-col=\"duration\" data-sort=\"{r.duration_ms}\">{dur_esc}</td>"
             f"<td class=\"r\" data-col=\"tokens\" data-sort=\"{r.tokens}\">{tok_esc}</td>"
+            f"<td class=\"r\" data-col=\"rate\" data-sort=\"{rate_raw}\">{rate_esc}</td>"
             f"<td class=\"r\" data-col=\"sessions\" data-sort=\"{r.sessions}\">{sess_esc}</td>"
             f"</tr>"
         )
     body_html = "\n".join(body_rows) if body_rows else (
-        '      <tr><td colspan="5" class="empty center">'
+        '      <tr><td colspan="6" class="empty center">'
         "Нет проектов в окне</td></tr>"
     )
 
@@ -588,6 +636,7 @@ def render_html(
           <th class="sortable r" data-col="last_update" tabindex="0" role="button" aria-sort="none">Last Update<span class="sort-ind"></span></th>
           <th class="sortable r" data-col="duration" tabindex="0" role="button" aria-sort="none">Duration<span class="sort-ind"></span></th>
           <th class="sortable r" data-col="tokens" tabindex="0" role="button" aria-sort="none">Tokens<span class="sort-ind"></span></th>
+          <th class="sortable r" data-col="rate" tabindex="0" role="button" aria-sort="none">Tok/Hour<span class="sort-ind"></span></th>
           <th class="sortable r" data-col="sessions" tabindex="0" role="button" aria-sort="none">Session<span class="sort-ind"></span></th>
         </tr>
       </thead>
@@ -621,6 +670,7 @@ def render_html(
         last_update: "desc",
         duration: "desc",
         tokens: "desc",
+        rate: "desc",
         sessions: "desc",
       }};
       var VALID_COLS = Object.keys(DEFAULT_DIR);
