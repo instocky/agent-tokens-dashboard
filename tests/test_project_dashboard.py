@@ -15,7 +15,10 @@ test_log_scale.py, test_weekly_cap.py, test_24h_stream.py).
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from build_project_dashboard import (  # noqa: E402
     MSK,
     ProjectRow,
+    WeekSpan,
     collect_projects,
     compute_window,
     format_duration,
@@ -612,6 +616,192 @@ def test_render_html_rate_short_duration_is_dash() -> None:
     assert ">—<" in tr, f"rate display not '—' for short duration; got: {tr}"
 
 
+def test_render_html_sort_by_last_update_iso_asc_desc() -> None:
+    """Регрессия: client-side sortBy(col='last_update', dir) реально меняет порядок.
+
+    Бойлерплейт: достаём inline-<script> из render_html, инжектим в IIFE
+    экспорт нужных функций на globalThis, гоняем через node с mock-DOM.
+    Skip'аемся, если node не установлен (это не блокер на Windows-машинах
+    без Node.js, но локально мы node прогоняем обязательно).
+
+    Покрывает баг: data-sort="2026-08-07" + Number(...) = NaN → все cmp=0
+    → порядок не меняется, индикатор asc/desc врёт.
+    """
+    if shutil.which("node") is None:
+        print("    [skip] node not found")
+        return
+
+    # Три проекта с разными датами, но одинаковыми метриками, чтобы единственный
+    # меняющийся сигнал был last_update. max_ms растёт вместе с датой — это
+    # совпадает с python-дефолтом, но для client-side comparator неважно.
+    rows: list[ProjectRow] = [
+        ProjectRow(
+            project="alpha",
+            last_update=date(2026, 8, 5),
+            max_ms=1_700_000_000_000,
+            duration_ms=3_600_000,
+            tokens=1_000_000,
+            sessions=1,
+            is_active=False,
+        ),
+        ProjectRow(
+            project="beta",
+            last_update=date(2026, 8, 7),
+            max_ms=1_700_500_000_000,
+            duration_ms=3_600_000,
+            tokens=1_000_000,
+            sessions=1,
+            is_active=False,
+        ),
+        ProjectRow(
+            project="gamma",
+            last_update=date(2026, 8, 3),
+            max_ms=1_699_500_000_000,
+            duration_ms=3_600_000,
+            tokens=1_000_000,
+            sessions=1,
+            is_active=False,
+        ),
+    ]
+    now = datetime(2026, 8, 7, 12, 0, tzinfo=MSK)
+    _start, _end, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # 1. Извлекаем inline-скрипт (после render_html f-string'ы уже развёрнуты,
+    #    так что ищем обычные <script>...</script>).
+    m = re.search(r"<script>(.*?)</script>", html_doc, re.S)
+    assert m is not None, "<script> not found in rendered HTML"
+    script = m.group(1)
+
+    # 2. Перед последним `})();` инжектим экспорт функций на globalThis.
+    #    IIFE: `(function () { ... })();`. Ищем конец IIFE и вставляем перед ним.
+    #    Без `\\s*` в регексе — он вёл к ложному None (после `})();` идёт `\n  `
+    #    от f-string отступов; матч есть, но `\\s*` его «не съел» стабильно).
+    export_line = (
+        "globalThis.__t = { sortValueFor: sortValueFor, "
+        "compareRows: compareRows, sortBy: sortBy };\n    "
+    )
+    script_for_node, n = re.subn(
+        r"\}\)\(\);", export_line + "})();", script, count=1
+    )
+    assert n == 1, "could not inject export into IIFE"
+
+    # 3. Сборка driver'а: mock-DOM + вызов sortBy в обоих направлениях +
+    #    печать порядка (project list) в stdout для парсинга.
+    #    Inline-script использует только:
+    #      - document.querySelector("table tbody")
+    #      - document.querySelectorAll("thead th.sortable")
+    #      - document.addEventListener("DOMContentLoaded", ...)
+    #      - document.readyState
+    #      - localStorage.getItem / setItem
+    #    Реальные <tr>/<td> не нужны — нужен только контракт:
+    #    row.querySelector('td[data-col="<col>"]') → getAttribute("data-sort").
+    driver = r"""
+'use strict';
+const _store = {};
+globalThis.localStorage = {
+  getItem: function (k) { return Object.prototype.hasOwnProperty.call(_store, k) ? _store[k] : null; },
+  setItem: function (k, v) { _store[k] = String(v); },
+};
+function makeRow(project, cells) {
+  // cells: объект {col: sortValue-as-string}
+  const wrapped = {};
+  for (const k of Object.keys(cells)) {
+    wrapped[k] = { getAttribute: function (attr) { return attr === "data-sort" ? cells[k] : null; } };
+  }
+  return {
+    _project: project,
+    _cells: wrapped,
+    querySelector: function (sel) {
+      const m = sel.match(/td\[data-col="(\w+)"\]/);
+      return m ? (this._cells[m[1]] || null) : null;
+    },
+  };
+}
+function makeTbody(rows) {
+  return {
+    _rows: rows,
+    querySelectorAll: function (sel) {
+      if (sel === "tr") return this._rows;
+      return [];
+    },
+    appendChild: function (node) {
+      const i = this._rows.indexOf(node);
+      if (i >= 0) this._rows.splice(i, 1);
+      this._rows.push(node);
+    },
+  };
+}
+// _ROWS — это сам tbody._rows, не отдельная копия: sortBy мутирует
+// tbody._rows через appendChild, и мы хотим видеть эти изменения здесь.
+const tbody = makeTbody(globalThis.__RAW_ROWS.map(function (r) { return makeRow(r._project, r._cells); }));
+const _ROWS = tbody._rows;
+globalThis.document = {
+  querySelector: function (sel) {
+    if (sel === "table tbody") return tbody;
+    return null;
+  },
+  querySelectorAll: function () { return []; },
+  addEventListener: function () {},
+  readyState: "complete",
+};
+
+__SCRIPT__;
+
+__t.sortBy("last_update", "asc");
+const ascOrder = _ROWS.map(function (r) { return r._project; }).join(",");
+__t.sortBy("last_update", "desc");
+const descOrder = _ROWS.map(function (r) { return r._project; }).join(",");
+process.stdout.write("ASC=" + ascOrder + "\nDESC=" + descOrder + "\n");
+"""
+    rows_js_list = []
+    for r in rows:
+        cells = {
+            "project": r.project,
+            "last_update": r.last_update.isoformat(),
+            "duration": str(r.duration_ms),
+            "tokens": str(r.tokens),
+            "rate": str(rate_sort_value(r.tokens, r.duration_ms)),
+            "sessions": str(int(r.sessions)),
+        }
+        rows_js_list.append({"_project": r.project, "_cells": cells})
+    rows_js = "globalThis.__RAW_ROWS = " + json.dumps(rows_js_list)
+
+    # rows_js идёт ПЕРЕД driver: driver читает globalThis.__ROWS при выполнении.
+    full = rows_js + "\n" + driver.replace("__SCRIPT__", script_for_node) + "\n"
+
+    proc = subprocess.run(
+        ["node", "-e", full],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"node exited with {proc.returncode}\nSTDOUT:\n{proc.stdout}\n"
+            f"STDERR:\n{proc.stderr}"
+        )
+    out = proc.stdout
+    m_asc = re.search(r"ASC=([^\n]+)", out)
+    m_desc = re.search(r"DESC=([^\n]+)", out)
+    assert m_asc and m_desc, f"unexpected node output:\n{out}"
+    asc_order = m_asc.group(1).split(",")
+    desc_order = m_desc.group(1).split(",")
+
+    # 08-03 gamma < 08-05 alpha < 08-07 beta. asc = [gamma, alpha, beta].
+    assert asc_order == ["gamma", "alpha", "beta"], (
+        f"asc order wrong: {asc_order}\nfull output:\n{out}"
+    )
+    # desc = [beta, alpha, gamma].
+    assert desc_order == ["beta", "alpha", "gamma"], (
+        f"desc order wrong: {desc_order}\nfull output:\n{out}"
+    )
+    # Sanity: asc и desc — взаимные reverse'ы.
+    assert asc_order == list(reversed(desc_order)), (
+        f"asc/desc are not reverses: asc={asc_order} desc={desc_order}"
+    )
+
+
 def test_render_html_embeds_sort_script_and_storage_key() -> None:
     """Inline <script> с localStorage-ключом и sortBy/init функциями."""
     rows: list[ProjectRow] = [
@@ -667,6 +857,7 @@ def main() -> int:
         test_render_html_has_sortable_headers,
         test_render_html_has_data_sort_per_cell,
         test_render_html_rate_short_duration_is_dash,
+        test_render_html_sort_by_last_update_iso_asc_desc,
         test_render_html_embeds_sort_script_and_storage_key,
     ]
     passed = 0

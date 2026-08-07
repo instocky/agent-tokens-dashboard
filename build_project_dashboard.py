@@ -704,14 +704,20 @@ def render_html(
         var cmp;
         if (col === "project") {{
           cmp = ax.localeCompare(bx);
+        }} else if (col === "last_update") {{
+          // ISO "YYYY-MM-DD" лексикографически совпадает с хронологией.
+          // Number("2026-08-07") === NaN — если привести к числу, все строки
+          // дают cmp === 0, и сортировка по дате "ломается" (строки остаются
+          // в исходном Python-порядке, а индикатор asc/desc врёт).
+          cmp = ax < bx ? -1 : ax > bx ? 1 : 0;
         }} else {{
           var an = Number(ax), bn = Number(bx);
           cmp = an < bn ? -1 : an > bn ? 1 : 0;
         }}
-        // Tie-breaker: last_update desc (ISO date → численное сравнение).
+        // Tie-breaker: last_update desc (ISO date, строковое сравнение).
         if (cmp === 0) {{
-          var aL = Number(sortValueFor(a, "last_update"));
-          var bL = Number(sortValueFor(b, "last_update"));
+          var aL = sortValueFor(a, "last_update");
+          var bL = sortValueFor(b, "last_update");
           cmp = aL < bL ? 1 : aL > bL ? -1 : 0;
         }}
         return cmp;
