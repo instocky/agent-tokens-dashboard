@@ -25,11 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from build_project_dashboard import (  # noqa: E402
     MSK,
+    ProjectRow,
     collect_projects,
     compute_window,
     format_duration,
     format_tokens,
     project_from_workspace,
+    render_html,
 )
 
 
@@ -443,6 +445,104 @@ def test_collect_projects_broken_json() -> None:
     assert rows == [], f"expected [], got {rows}"
 
 
+# ---- render_html (client-side sort contract) -------------------------------
+
+def test_render_html_has_sortable_headers() -> None:
+    """Все 5 <th> помечены class="sortable" + data-col + tabindex."""
+    rows: list[ProjectRow] = [
+        ProjectRow(
+            project="alpha",
+            last_update=date(2026, 8, 7),
+            max_ms=1_700_000_000_000,
+            duration_ms=3_600_000,
+            tokens=1_500_000,
+            sessions=2,
+            is_active=False,
+        ),
+    ]
+    now = datetime(2026, 8, 7, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    expected_cols = ["project", "last_update", "duration", "tokens", "sessions"]
+    for col in expected_cols:
+        # Ищем <th ... data-col="<col>" ... class="sortable" ...>
+        marker = f'data-col="{col}"'
+        assert marker in html_doc, f"missing {marker}"
+        # class="sortable" должен быть на каждом sortable <th>
+        # (берём подстроку ровно вокруг нашего data-col, чтобы не словить ложный матч).
+        # Простая проверка: количество sortable th >= 5.
+        assert html_doc.count('class="sortable') >= 5, (
+            f"expected >= 5 sortable th, got {html_doc.count(chr(34)+'sortable')}"
+        )
+
+
+def test_render_html_has_data_sort_per_cell() -> None:
+    """Каждый <td> имеет data-col и data-sort с raw-значением."""
+    rows: list[ProjectRow] = [
+        ProjectRow(
+            project="alpha",
+            last_update=date(2026, 8, 7),
+            max_ms=1_700_000_000_000,
+            duration_ms=3_600_000,    # 1h
+            tokens=1_500_000,         # 1.5M (formatted)
+            sessions=2,
+            is_active=False,
+        ),
+    ]
+    now = datetime(2026, 8, 7, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Per-cell проверка. Берём первую строку из <tbody>, не из <thead>
+    # (иначе возьмём header row, в которой нет data-sort).
+    tbody_pos = html_doc.find("<tbody>")
+    assert tbody_pos != -1, "<tbody> not found"
+    tr_start = html_doc.find("<tr", tbody_pos)
+    tr_end = html_doc.find("</tr>", tr_start) + len("</tr>")
+    tr = html_doc[tr_start:tr_end]
+    # data-col атрибуты должны присутствовать на каждом <td>.
+    for col in ["project", "last_update", "duration", "tokens", "sessions"]:
+        assert f'data-col="{col}"' in tr, f"row missing data-col={col}"
+    # Raw values, не formatted: duration=3600000 (не "1h"), tokens=1500000 (не "1.5M").
+    assert 'data-sort="3600000"' in tr, f"row missing data-sort for duration; got: {tr}"
+    assert 'data-sort="1500000"' in tr, f"row missing data-sort for tokens; got: {tr}"
+    assert 'data-sort="2"' in tr, f"row missing data-sort for sessions; got: {tr}"
+    assert 'data-sort="2026-08-07"' in tr, f"row missing data-sort for last_update; got: {tr}"
+    # project data-sort — без html.escape, но slug безопасный.
+    assert 'data-sort="alpha"' in tr, f"row missing data-sort for project; got: {tr}"
+
+
+def test_render_html_embeds_sort_script_and_storage_key() -> None:
+    """Inline <script> с localStorage-ключом и sortBy/init функциями."""
+    rows: list[ProjectRow] = [
+        ProjectRow(
+            project="alpha",
+            last_update=date(2026, 8, 7),
+            max_ms=1_700_000_000_000,
+            duration_ms=3_600_000,
+            tokens=1_500_000,
+            sessions=2,
+            is_active=False,
+        ),
+    ]
+    now = datetime(2026, 8, 7, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Inline script.
+    assert "<script>" in html_doc and "</script>" in html_doc
+    # Storage key + дефолт.
+    assert "agent-tokens-dashboard:sort" in html_doc
+    assert "DEFAULT_STATE" in html_doc or '"col": "last_update"' in html_doc
+    # Sort logic present.
+    assert "sortBy" in html_doc
+    assert "onHeaderClick" in html_doc
+    # CSS rules.
+    assert "thead th.sortable" in html_doc
+    assert "cursor: pointer" in html_doc
+
+
 # ---- main ------------------------------------------------------------------
 
 def main() -> int:
@@ -463,6 +563,9 @@ def main() -> int:
         test_collect_projects_empty_window,
         test_collect_projects_session_without_token_usage,
         test_collect_projects_broken_json,
+        test_render_html_has_sortable_headers,
+        test_render_html_has_data_sort_per_cell,
+        test_render_html_embeds_sort_script_and_storage_key,
     ]
     passed = 0
     for t in tests:

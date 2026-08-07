@@ -11,8 +11,10 @@
 now_msk в main() — будущих дней в БД нет, так что это эквивалентно
 "включена вся текущая неделя до текущего момента".
 
-Сортировка: сверху проект с самой свежей активностью (MAX created_at_ms
-в окне desc), tie-break по tokens desc.
+Default sort: проект с самой свежей активностью (MAX created_at_ms в
+окне desc), tie-break по tokens desc. Юзер может пересортировать таблицу
+в браузере — клик на `<th>` меняет порядок, выбор помнится в localStorage
+(ключ "agent-tokens-dashboard:sort") и переживает 60s meta-refresh.
 
 Meta-workspace'ы (`~/.mavis/...`, `~/.minimax/...`) скрываются — это
 служебные workspace'ы агента, не реальные проекты. Сессии с пустым/None
@@ -206,7 +208,8 @@ def collect_projects(
       4. Группируем по project (slug из workspaceDir; meta → skip).
       5. Per project: max_ms=MAX, duration_ms=SUM, tokens=SUM,
          sessions=COUNT, is_active=ANY(status=='started').
-      6. Sort: max_ms DESC, tie-break tokens DESC.
+      6. Default sort: max_ms DESC, tie-break tokens DESC. Финальный порядок
+         строк юзер может поменять кликом по колонке (см. render_html).
 
     Edge cases:
       - Нет сообщений в окне → []
@@ -395,6 +398,10 @@ def render_html(
     tokens_total = sum(r.tokens for r in rows)
 
     # Table rows.
+    # `data-col` + `data-sort` на каждом <td> — контракт для client-side
+    # сортировки (см. <script> в render_html). Raw-значения в data-sort,
+    # formatted-версии остаются в тексте ячейки ("1h 39m" → "5940000",
+    # "8.81M" → "8810000"). Это развязывает форматирование и сортировку.
     body_rows: list[str] = []
     for r in rows:
         cls = ' class="active"' if r.is_active else ""
@@ -405,13 +412,16 @@ def render_html(
         sess_esc = str(int(r.sessions))
         badge = '<span class="badge">active</span>' if r.is_active else ""
 
+        # data-sort: ISO date для last_update, raw int для остальных метрик,
+        # raw slug для project (localeCompare в JS).
+        date_sort = r.last_update.isoformat()  # "YYYY-MM-DD" — ISO-лексикографически = хронологически
         body_rows.append(
             f"      <tr{cls}>"
-            f"<td class=\"project\">{project_esc}{badge}</td>"
-            f"<td class=\"r\">{date_esc}</td>"
-            f"<td class=\"r\">{dur_esc}</td>"
-            f"<td class=\"r\">{tok_esc}</td>"
-            f"<td class=\"r\">{sess_esc}</td>"
+            f"<td class=\"project\" data-col=\"project\" data-sort=\"{project_esc}\">{project_esc}{badge}</td>"
+            f"<td class=\"r\" data-col=\"last_update\" data-sort=\"{date_sort}\">{date_esc}</td>"
+            f"<td class=\"r\" data-col=\"duration\" data-sort=\"{r.duration_ms}\">{dur_esc}</td>"
+            f"<td class=\"r\" data-col=\"tokens\" data-sort=\"{r.tokens}\">{tok_esc}</td>"
+            f"<td class=\"r\" data-col=\"sessions\" data-sort=\"{r.sessions}\">{sess_esc}</td>"
             f"</tr>"
         )
     body_html = "\n".join(body_rows) if body_rows else (
@@ -504,6 +514,23 @@ def render_html(
       border-bottom: 1px solid var(--line);
     }}
     thead th.r {{ text-align: right; }}
+    thead th.sortable {{
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+    }}
+    thead th.sortable:hover {{ color: var(--ink); }}
+    thead th.sortable:focus-visible {{
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }}
+    thead th.sortable.sorted {{ color: var(--ink); }}
+    thead th .sort-ind {{
+      display: inline-block;
+      margin-left: 4px;
+      width: 8px;
+      color: var(--accent);
+      font-size: 9px;
+    }}
     tbody td {{
       padding: 10px;
       border-bottom: 1px solid var(--line);
@@ -557,11 +584,11 @@ def render_html(
     <table>
       <thead>
         <tr>
-          <th>Project</th>
-          <th class="r">Last Update</th>
-          <th class="r">Duration</th>
-          <th class="r">Tokens</th>
-          <th class="r">Session</th>
+          <th class="sortable" data-col="project" tabindex="0" role="button" aria-sort="none">Project<span class="sort-ind"></span></th>
+          <th class="sortable r" data-col="last_update" tabindex="0" role="button" aria-sort="none">Last Update<span class="sort-ind"></span></th>
+          <th class="sortable r" data-col="duration" tabindex="0" role="button" aria-sort="none">Duration<span class="sort-ind"></span></th>
+          <th class="sortable r" data-col="tokens" tabindex="0" role="button" aria-sort="none">Tokens<span class="sort-ind"></span></th>
+          <th class="sortable r" data-col="sessions" tabindex="0" role="button" aria-sort="none">Session<span class="sort-ind"></span></th>
         </tr>
       </thead>
       <tbody>
@@ -573,6 +600,147 @@ def render_html(
       <span>{html.escape(footer_right)}</span>
     </div>
   </div>
+  <script>
+    // Client-side column sorting. Self-contained, no deps.
+    //
+    // Контракт:
+    //   - <th data-col="..." class="sortable">  — кликабельный заголовок.
+    //   - <td data-col="..." data-sort="<raw>"> — raw-значение для сортировки.
+    //   - State в localStorage["agent-tokens-dashboard:sort"] как JSON
+    //     {{"col": "<col>", "dir": "asc"|"desc"}}. Переживает 60s meta-refresh.
+    //   - Default при пустом state: last_update desc (повторяет Python-дефолт).
+    //   - Click по активной колонке → toggle dir. По другой → dir по типу
+    //     колонки (project=asc, остальные=desc). Tie-breaker глобальный:
+    //     last_update desc.
+    (function () {{
+      "use strict";
+      var STORAGE_KEY = "agent-tokens-dashboard:sort";
+      var DEFAULT_STATE = {{ col: "last_update", dir: "desc" }};
+      var DEFAULT_DIR = {{
+        project: "asc",
+        last_update: "desc",
+        duration: "desc",
+        tokens: "desc",
+        sessions: "desc",
+      }};
+      var VALID_COLS = Object.keys(DEFAULT_DIR);
+
+      function readState() {{
+        try {{
+          var raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return DEFAULT_STATE;
+          var s = JSON.parse(raw);
+          if (!s || VALID_COLS.indexOf(s.col) === -1) return DEFAULT_STATE;
+          if (s.dir !== "asc" && s.dir !== "desc") return DEFAULT_STATE;
+          return s;
+        }} catch (e) {{
+          return DEFAULT_STATE;
+        }}
+      }}
+
+      function writeState(s) {{
+        try {{ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }}
+        catch (e) {{ /* private mode / disabled storage — sort работает in-memory */ }}
+      }}
+
+      function sortValueFor(row, col) {{
+        var cell = row.querySelector('td[data-col="' + col + '"]');
+        return cell ? cell.getAttribute("data-sort") : "";
+      }}
+
+      function compareRows(a, b, col) {{
+        var ax = sortValueFor(a, col);
+        var bx = sortValueFor(b, col);
+        var cmp;
+        if (col === "project") {{
+          cmp = ax.localeCompare(bx);
+        }} else {{
+          var an = Number(ax), bn = Number(bx);
+          cmp = an < bn ? -1 : an > bn ? 1 : 0;
+        }}
+        // Tie-breaker: last_update desc (ISO date → численное сравнение).
+        if (cmp === 0) {{
+          var aL = Number(sortValueFor(a, "last_update"));
+          var bL = Number(sortValueFor(b, "last_update"));
+          cmp = aL < bL ? 1 : aL > bL ? -1 : 0;
+        }}
+        return cmp;
+      }}
+
+      function sortBy(col, dir) {{
+        var tbody = document.querySelector("table tbody");
+        if (!tbody) return;
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+        var mul = dir === "desc" ? -1 : 1;
+        rows.sort(function (a, b) {{ return compareRows(a, b, col) * mul; }});
+        // appendChild перемещает существующий узел, не клонирует — порядок
+        // в DOM меняется, ссылки на <tr> остаются валидными.
+        for (var i = 0; i < rows.length; i++) {{
+          tbody.appendChild(rows[i]);
+        }}
+      }}
+
+      function updateIndicators(col, dir) {{
+        var ths = document.querySelectorAll("thead th.sortable");
+        for (var i = 0; i < ths.length; i++) {{
+          var th = ths[i];
+          var ind = th.querySelector(".sort-ind");
+          if (th.getAttribute("data-col") === col) {{
+            if (ind) ind.textContent = dir === "asc" ? "\\u25B2" : "\\u25BC";
+            th.classList.add("sorted");
+            th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
+          }} else {{
+            if (ind) ind.textContent = "";
+            th.classList.remove("sorted");
+            th.setAttribute("aria-sort", "none");
+          }}
+        }}
+      }}
+
+      function onHeaderClick(ev) {{
+        var th = ev.currentTarget;
+        var col = th.getAttribute("data-col");
+        if (VALID_COLS.indexOf(col) === -1) return;
+        var current = readState();
+        var dir;
+        if (current.col === col) {{
+          dir = current.dir === "asc" ? "desc" : "asc";
+        }} else {{
+          dir = DEFAULT_DIR[col] || "desc";
+        }}
+        var next = {{ col: col, dir: dir }};
+        writeState(next);
+        sortBy(col, dir);
+        updateIndicators(col, dir);
+      }}
+
+      function onHeaderKey(ev) {{
+        // Enter / Space — то же, что click. Без preventDefault для Enter
+        // (форма не submit'ится, всё ОК).
+        if (ev.key === "Enter" || ev.key === " ") {{
+          ev.preventDefault();
+          onHeaderClick(ev);
+        }}
+      }}
+
+      function init() {{
+        var ths = document.querySelectorAll("thead th.sortable");
+        for (var i = 0; i < ths.length; i++) {{
+          ths[i].addEventListener("click", onHeaderClick);
+          ths[i].addEventListener("keydown", onHeaderKey);
+        }}
+        var s = readState();
+        sortBy(s.col, s.dir);
+        updateIndicators(s.col, s.dir);
+      }}
+
+      if (document.readyState === "loading") {{
+        document.addEventListener("DOMContentLoaded", init);
+      }} else {{
+        init();
+      }}
+    }})();
+  </script>
 </body>
 </html>
 """
