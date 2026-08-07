@@ -1,0 +1,480 @@
+"""Unit tests for build_project_dashboard.py.
+
+Запускается напрямую: `python tests/test_project_dashboard.py`.
+Не pytest — следуем конвенции tests/ в этом проекте (см. test_windows.py,
+test_log_scale.py, test_weekly_cap.py, test_24h_stream.py).
+
+Покрывает:
+  - project_from_workspace: slug extraction, meta-workspace skip
+  - compute_window: 5 недель (4 завершённых + текущая), Пн–Вс
+  - format_tokens: K/M/B boundary precision + trailing zero strip
+  - format_duration: Xm / Xh Ym / Xd Yh градация
+  - collect_projects: группировка, агрегация, сортировка, active-флаг
+    (через in-memory SQLite — самый ценный тест: ловит регрессию SQL)
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+# Чтобы import работал и при запуске из корня, и из tests/.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from build_project_dashboard import (  # noqa: E402
+    MSK,
+    collect_projects,
+    compute_window,
+    format_duration,
+    format_tokens,
+    project_from_workspace,
+)
+
+
+# ---- project_from_workspace -----------------------------------------------
+
+def test_project_from_workspace_slug_extraction() -> None:
+    """YYYY_ префикс стрипается, остальное — как есть."""
+    cases = [
+        # (workspaceDir, expected slug)
+        ("C:/Projects/Python/0803_agent-tokens-dashboard", "agent-tokens-dashboard"),
+        ("C:/Projects/humans/0807_db-contingent", "db-contingent"),
+        ("C:/Projects/Python/0803_agent-tokens-dashboard/", "agent-tokens-dashboard"),
+        ("C:/Projects/humans/foo", "foo"),  # без префикса — as-is
+        # backslash Windows path тоже поддерживается через Path().
+        ("C:\\Projects\\Python\\0803_agent-tokens-dashboard", "agent-tokens-dashboard"),
+    ]
+    failures: list[str] = []
+    for ws, expected in cases:
+        got = project_from_workspace(ws)
+        if got != expected:
+            failures.append(f"  {ws!r}: got {got!r}, expected {expected!r}")
+    if failures:
+        raise AssertionError("project_from_workspace slug failures:\n"
+                             + "\n".join(failures))
+
+
+def test_project_from_workspace_meta_skip() -> None:
+    """.mavis и .minimax в path components → None (meta-workspace)."""
+    cases = [
+        # (workspaceDir, описание)
+        ("C:/Users/user/.mavis/agents/mavis/workspace", "mavis agent workspace"),
+        ("C:/Users/user/.minimax/v2/sqlite", "minimax sqlite dir"),
+        ("C:/Users/user/.mavis", "bare mavis dir"),
+        ("", "empty string"),
+    ]
+    failures: list[str] = []
+    for ws, desc in cases:
+        got = project_from_workspace(ws)
+        if got is not None:
+            failures.append(f"  {desc!r} ({ws!r}): got {got!r}, expected None")
+    if failures:
+        raise AssertionError("meta-skip failures:\n" + "\n".join(failures))
+
+
+def test_project_from_workspace_none() -> None:
+    """None на входе → None на выходе, без exception."""
+    assert project_from_workspace(None) is None
+    assert project_from_workspace("") is None
+
+
+def test_project_from_workspace_does_not_match_substring() -> None:
+    """`.mavis` как substring в имени файла — НЕ должно триггерить skip.
+    Проверяем что ищем именно path components, не подстроку."""
+    # foo.mavis-bar — basename содержит ".mavis" как подстроку,
+    # но parts не содержат ".mavis".
+    got = project_from_workspace("C:/Projects/test/0803_foo.mavis-bar")
+    assert got == "foo.mavis-bar", f"got {got!r}"
+
+
+# ---- compute_window --------------------------------------------------------
+
+def test_compute_window_5_weeks() -> None:
+    """4 завершованных + текущая = 5 недель всего."""
+    today = date(2026, 8, 7)  # пятница W-32
+    start_dt, end_dt, weeks = compute_window(today)
+    assert len(weeks) == 5, f"weeks={len(weeks)}"
+    assert weeks[0].label == "W-28"
+    assert weeks[-1].label == "W-32"
+    # Каждая неделя: Пн–Вс (isoweekday 1..7).
+    for w in weeks:
+        assert w.monday.isoweekday() == 1, f"{w.label}: monday={w.monday}"
+        assert w.sunday.isoweekday() == 7, f"{w.label}: sunday={w.sunday}"
+        assert (w.sunday - w.monday).days == 6
+    # start_dt = midnight Monday W-28; end_dt = midnight Monday W-33.
+    assert start_dt.date() == date(2026, 7, 6)  # Monday W-28
+    assert end_dt.date() == date(2026, 8, 10)   # Monday W-33 (exclusive end)
+    # Timezone — MSK.
+    assert start_dt.tzinfo == MSK
+    assert end_dt.tzinfo == MSK
+
+
+def test_compute_window_monday_start() -> None:
+    """Сегодня = понедельник: current_monday == today, окно всё равно 5 недель."""
+    today = date(2026, 8, 3)  # понедельник W-32
+    _, _, weeks = compute_window(today)
+    assert weeks[-1].monday == today
+    assert weeks[-1].sunday == date(2026, 8, 9)
+    assert weeks[0].monday == date(2026, 7, 6)
+
+
+def test_compute_window_sunday_end() -> None:
+    """Сегодня = воскресенье: current_monday = сегодня − 6."""
+    today = date(2026, 8, 9)  # воскресенье W-32
+    _, _, weeks = compute_window(today)
+    assert weeks[-1].monday == date(2026, 8, 3)
+    assert weeks[-1].sunday == today
+
+
+# ---- format_tokens ---------------------------------------------------------
+
+def test_format_tokens() -> None:
+    """Контракт precision: K=1dp, M/B=2dp, trailing zero strip.
+
+    NB: round-up на границе (например, 999_999 → "1000K") — это тот же
+    контракт, что в build_dashboard.py::fmt_tokens и
+    build_session_dashboard.py::format_tokens. Ловить не надо — это
+    согласовано с двумя другими скриптами.
+    """
+    cases = [
+        (0, "0"),
+        (1, "1"),
+        (999, "999"),
+        (1_000, "1K"),
+        (1_500, "1.5K"),
+        (182_500, "182.5K"),
+        (941_800, "941.8K"),
+        (999_999, "1000K"),  # round-up на K→M границе (как в session-dashboard)
+        (1_000_000, "1M"),  # trailing .00 strip
+        (1_230_000, "1.23M"),
+        (5_930_000, "5.93M"),
+        (999_990_000, "999.99M"),  # последний 2dp без round-up
+        (999_999_999, "1000M"),  # round-up на M→B границе
+        (1_000_000_000, "1B"),
+        (1_500_000_000, "1.5B"),
+        (100_000, "100K"),  # 100.0K → 100K
+        (-1, "0"),  # защита от отрицательных
+    ]
+    failures: list[str] = []
+    for n, expected in cases:
+        got = format_tokens(n)
+        if got != expected:
+            failures.append(f"  {n}: got {got!r}, expected {expected!r}")
+    if failures:
+        raise AssertionError("format_tokens failures:\n" + "\n".join(failures))
+
+
+# ---- format_duration -------------------------------------------------------
+
+def test_format_duration() -> None:
+    """Градация: <1m / Xm / Xh / Xh Ym / Xd / Xd Yh."""
+    cases = [
+        (0, "< 1m"),
+        (30_000, "< 1m"),  # 0.5 min
+        (59_999, "< 1m"),
+        (60_000, "1m"),  # ровно 1 min
+        (1_500_000, "25m"),  # 25 min
+        (3_600_000, "1h"),  # ровно 1 час
+        (3_900_000, "1h 5m"),  # 1h 5m
+        (7_440_000, "2h 4m"),  # 2h 4m
+        (86_400_000, "1d"),  # ровно 1 день
+        (90_000_000, "1d 1h"),  # 1d 1h
+        (194_400_000, "2d 6h"),  # 2d 6h
+        (-1, "0m"),  # защита
+    ]
+    failures: list[str] = []
+    for ms, expected in cases:
+        got = format_duration(ms)
+        if got != expected:
+            failures.append(f"  {ms}: got {got!r}, expected {expected!r}")
+    if failures:
+        raise AssertionError("format_duration failures:\n" + "\n".join(failures))
+
+
+# ---- collect_projects (integration через :memory: SQLite) -----------------
+
+def _make_db() -> sqlite3.Connection:
+    """Создать in-memory SQLite с минимальной schema под collect_projects."""
+    con = sqlite3.connect(":memory:")
+    con.executescript("""
+        CREATE TABLE local_runtime_message_rows (
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE local_runtime_token_usage (
+            session_id TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL
+        );
+        CREATE TABLE local_runtime_sessions (
+            session_id TEXT PRIMARY KEY,
+            record_json TEXT
+        );
+    """)
+    return con
+
+
+def _insert_session(
+    con: sqlite3.Connection,
+    sid: str,
+    workspace_dir: str | None,
+    status: str,
+    msgs: list[tuple[int, str]],  # (created_at_ms, role)
+    tokens: list[tuple[int, int, int]],  # (ts, in, out)
+) -> None:
+    """Хелпер для вставки одной сессии в тестовую БД."""
+    for ts, role in msgs:
+        con.execute(
+            "INSERT INTO local_runtime_message_rows VALUES (?, ?, ?)",
+            (sid, role, ts),
+        )
+    for ts, in_tok, out_tok in tokens:
+        con.execute(
+            "INSERT INTO local_runtime_token_usage VALUES (?, ?, ?, ?)",
+            (sid, ts, in_tok, out_tok),
+        )
+    rec = {
+        "sessionId": sid,
+        "workspaceDir": workspace_dir,
+        "status": status,
+    }
+    con.execute(
+        "INSERT INTO local_runtime_sessions VALUES (?, ?)",
+        (sid, json.dumps(rec)),
+    )
+
+
+def test_collect_projects_groups_by_project() -> None:
+    """Две сессии одного проекта → одна строка, агрегаты просуммированы."""
+    con = _make_db()
+    # Проект "alpha", две сессии в W-32.
+    _insert_session(
+        con, "s1", "C:/Projects/Python/0803_alpha",
+        status="finished",
+        msgs=[(1_700_000_000_000, "user"), (1_700_003_600_000, "assistant")],  # 1h
+        tokens=[(1_700_000_000_000, 100, 50), (1_700_003_600_000, 200, 80)],
+    )
+    _insert_session(
+        con, "s2", "C:/Projects/Python/0803_alpha",
+        status="finished",
+        msgs=[(1_700_010_000_000, "user"), (1_700_010_900_000, "assistant")],  # 15m
+        tokens=[(1_700_010_000_000, 300, 100), (1_700_010_900_000, 50, 20)],
+    )
+    # Проект "beta", одна сессия.
+    _insert_session(
+        con, "s3", "C:/Projects/humans/0807_beta",
+        status="finished",
+        msgs=[(1_700_020_000_000, "user"), (1_700_021_800_000, "assistant")],  # 30m
+        tokens=[(1_700_020_000_000, 500, 200)],
+    )
+    con.commit()
+
+    # Окно: 5 недель с 2023-11-13 (Mon W-46) — обе сессии внутри.
+    # 1_700_000_000_000 = 2023-11-14 22:13:20 UTC ≈ 2023-11-15 01:13:20 MSK.
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+
+    rows = collect_projects(con, start_ms, end_ms)
+    assert len(rows) == 2, f"got {len(rows)} rows"
+
+    by_name = {r.project: r for r in rows}
+
+    # alpha: 2 sessions, total duration ~1h15m = 75m, tokens=100+50+200+80+300+100+50+20=900.
+    alpha = by_name["alpha"]
+    assert alpha.sessions == 2
+    assert alpha.tokens == 900
+    assert format_duration(alpha.duration_ms) == "1h 15m", (
+        f"alpha dur={format_duration(alpha.duration_ms)}"
+    )
+    assert alpha.is_active is False
+
+    # beta: 1 session, duration ~30m, tokens=500+200=700.
+    beta = by_name["beta"]
+    assert beta.sessions == 1
+    assert beta.tokens == 700
+    assert format_duration(beta.duration_ms) == "30m"
+
+
+def test_collect_projects_sort_most_recent_first() -> None:
+    """Sort: max_ms DESC. Проект с более свежей сессией — сверху."""
+    con = _make_db()
+    # old: ts=2023-11-15 MSK.
+    _insert_session(
+        con, "s_old", "C:/Projects/0803_old",
+        status="finished",
+        msgs=[(1_700_000_000_000, "user"), (1_700_000_600_000, "assistant")],
+        tokens=[(1_700_000_000_000, 10, 5)],
+    )
+    # recent: ts=2023-11-20 MSK.
+    _insert_session(
+        con, "s_recent", "C:/Projects/0803_recent",
+        status="finished",
+        msgs=[(1_700_400_000_000, "user"), (1_700_400_600_000, "assistant")],
+        tokens=[(1_700_400_000_000, 10, 5)],
+    )
+    con.commit()
+
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+    rows = collect_projects(con, start_ms, end_ms)
+    assert len(rows) == 2
+    assert rows[0].project == "recent", f"top={rows[0].project}"
+    assert rows[1].project == "old"
+
+
+def test_collect_projects_active_flag() -> None:
+    """is_active=True, если хотя бы одна сессия проекта status='started'."""
+    con = _make_db()
+    _insert_session(
+        con, "s1", "C:/Projects/0803_alpha",
+        status="finished",
+        msgs=[(1_700_000_000_000, "user"), (1_700_000_600_000, "assistant")],
+        tokens=[(1_700_000_000_000, 10, 5)],
+    )
+    _insert_session(
+        con, "s2", "C:/Projects/0803_alpha",
+        status="started",  # ← активная
+        msgs=[(1_700_001_000_000, "user"), (1_700_001_600_000, "assistant")],
+        tokens=[(1_700_001_000_000, 10, 5)],
+    )
+    con.commit()
+
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+    rows = collect_projects(con, start_ms, end_ms)
+    assert len(rows) == 1
+    assert rows[0].is_active is True, "active session должен дать active project"
+
+
+def test_collect_projects_skips_meta_workspaces() -> None:
+    """.mavis / .minimax / None workspaceDir → проект НЕ появляется в результате."""
+    con = _make_db()
+    # Meta — должно быть skipped.
+    _insert_session(
+        con, "s_meta", "C:/Users/user/.mavis/agents/mavis/workspace",
+        status="finished",
+        msgs=[(1_700_000_000_000, "user"), (1_700_000_600_000, "assistant")],
+        tokens=[(1_700_000_000_000, 10, 5)],
+    )
+    # None workspaceDir — должно быть skipped.
+    _insert_session(
+        con, "s_null", None,  # type: ignore[arg-type]
+        status="finished",
+        msgs=[(1_700_001_000_000, "user"), (1_700_001_600_000, "assistant")],
+        tokens=[(1_700_001_000_000, 10, 5)],
+    )
+    # Real — должно попасть.
+    _insert_session(
+        con, "s_real", "C:/Projects/0803_real",
+        status="finished",
+        msgs=[(1_700_002_000_000, "user"), (1_700_002_600_000, "assistant")],
+        tokens=[(1_700_002_000_000, 10, 5)],
+    )
+    con.commit()
+
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+    rows = collect_projects(con, start_ms, end_ms)
+    names = [r.project for r in rows]
+    assert names == ["real"], f"got {names}"
+
+
+def test_collect_projects_empty_window() -> None:
+    """Пустое окно (нет сообщений) → []."""
+    con = _make_db()
+    # Сообщение вне окна.
+    _insert_session(
+        con, "s_earlier", "C:/Projects/0803_old",
+        status="finished",
+        msgs=[(1_000_000_000_000, "user"), (1_000_000_600_000, "assistant")],
+        tokens=[(1_000_000_000_000, 10, 5)],
+    )
+    con.commit()
+    rows = collect_projects(
+        con,
+        int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000),
+        int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000),
+    )
+    assert rows == []
+
+
+def test_collect_projects_session_without_token_usage() -> None:
+    """Сессия с messages, но без token_usage → tokens=0, проект попадает."""
+    con = _make_db()
+    _insert_session(
+        con, "s1", "C:/Projects/0803_alpha",
+        status="finished",
+        msgs=[(1_700_000_000_000, "user"), (1_700_000_600_000, "assistant")],
+        tokens=[],  # ← пусто
+    )
+    con.commit()
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+    rows = collect_projects(con, start_ms, end_ms)
+    assert len(rows) == 1
+    assert rows[0].project == "alpha"
+    assert rows[0].tokens == 0
+    assert rows[0].sessions == 1
+
+
+def test_collect_projects_broken_json() -> None:
+    """Битый record_json → workspaceDir=None, сессия skip."""
+    con = _make_db()
+    con.execute(
+        "INSERT INTO local_runtime_message_rows VALUES (?, ?, ?)",
+        ("s1", "user", 1_700_000_000_000),
+    )
+    con.execute(
+        "INSERT INTO local_runtime_message_rows VALUES (?, ?, ?)",
+        ("s1", "assistant", 1_700_000_600_000),
+    )
+    con.execute(
+        "INSERT INTO local_runtime_sessions VALUES (?, ?)",
+        ("s1", "{broken json"),
+    )
+    con.commit()
+    start_ms = int(datetime(2023, 11, 13, tzinfo=MSK).timestamp() * 1000)
+    end_ms = int(datetime(2023, 12, 4, tzinfo=MSK).timestamp() * 1000)
+    rows = collect_projects(con, start_ms, end_ms)
+    assert rows == [], f"expected [], got {rows}"
+
+
+# ---- main ------------------------------------------------------------------
+
+def main() -> int:
+    tests = [
+        test_project_from_workspace_slug_extraction,
+        test_project_from_workspace_meta_skip,
+        test_project_from_workspace_none,
+        test_project_from_workspace_does_not_match_substring,
+        test_compute_window_5_weeks,
+        test_compute_window_monday_start,
+        test_compute_window_sunday_end,
+        test_format_tokens,
+        test_format_duration,
+        test_collect_projects_groups_by_project,
+        test_collect_projects_sort_most_recent_first,
+        test_collect_projects_active_flag,
+        test_collect_projects_skips_meta_workspaces,
+        test_collect_projects_empty_window,
+        test_collect_projects_session_without_token_usage,
+        test_collect_projects_broken_json,
+    ]
+    passed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {t.__name__}\n    {e}")
+    print(f"\n{passed}/{len(tests)} tests passed")
+    return 0 if passed == len(tests) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
