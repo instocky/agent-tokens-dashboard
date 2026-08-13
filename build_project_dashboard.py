@@ -775,11 +775,19 @@ def render_project_detail(
         f'{day_chart}'
         f'{day_separator}'
         f'{hour_chart}'
+        # NB: содержимое <script> в HTML5 — raw text, html-entities НЕ
+        # декодируются. html.escape() здесь превратил бы " в &quot;,
+        # и el.textContent в JS отдал бы &quot; буквально, JSON.parse
+        # упал бы, parseJSONScript словил бы в catch, rebuild24h
+        # сделал бы silent early-return — клик по дню "не работал".
+        # JSON у нас dict[str, dict[str, int]] — даты + целые,
+        # подстрока "</script" в данных не появится, дополнительный
+        # escape не нужен.
         f'<script type="application/json" class="day-hour-map">'
-        f'{html.escape(json.dumps(day_hour_map, ensure_ascii=False))}'
+        f'{json.dumps(day_hour_map, ensure_ascii=False)}'
         f'</script>'
         f'<script type="application/json" class="day-meta">'
-        f'{html.escape(json.dumps(day_meta, ensure_ascii=False))}'
+        f'{json.dumps(day_meta, ensure_ascii=False)}'
         f'</script>'
         f'</div>'
     )
