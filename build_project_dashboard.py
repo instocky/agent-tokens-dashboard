@@ -1679,18 +1679,43 @@ def render_html(
       }}
 
       function init() {{
-        // Chevrons
-        var chevrons = document.querySelectorAll(".chevron");
-        for (var i = 0; i < chevrons.length; i++) {{
-          chevrons[i].addEventListener("click", onChevronClick);
-          chevrons[i].addEventListener("keydown", onChevronKey);
-        }}
-        // Day bars (только непустые реагируют на click — см. handler)
-        var bars = document.querySelectorAll(".day-bar");
-        for (var j = 0; j < bars.length; j++) {{
-          bars[j].addEventListener("click", onDayBarClick);
-          bars[j].addEventListener("keydown", onDayBarKey);
-        }}
+        // Event delegation на <tbody>: один handler на parent вместо
+        // N штук на каждом шевроне/баре. Устойчиво к meta-refresh и к
+        // случаям, когда часть DOM пересоздаётся.
+        var tbody = document.querySelector("table tbody");
+        if (!tbody) return;
+        tbody.addEventListener("click", function (ev) {{
+          var t = ev.target;
+          // Chevron: клик мог прийти на сам span или на его text-node
+          // ребёнка (символ ▸). Ищем ближайший .chevron.
+          var chev = t.closest && t.closest(".chevron");
+          if (chev) {{
+            onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
+            return;
+          }}
+          var bar = t.closest && t.closest(".day-bar");
+          if (bar) {{
+            onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
+            return;
+          }}
+        }});
+        // Keydown — отдельно, чтобы не дублировать логику.
+        tbody.addEventListener("keydown", function (ev) {{
+          if (ev.key !== "Enter" && ev.key !== " ") return;
+          var t = ev.target;
+          var chev = t.closest && t.closest(".chevron");
+          if (chev) {{
+            ev.preventDefault();
+            onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
+            return;
+          }}
+          var bar = t.closest && t.closest(".day-bar");
+          if (bar) {{
+            ev.preventDefault();
+            onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
+            return;
+          }}
+        }});
       }}
 
       if (document.readyState === "loading") {{
