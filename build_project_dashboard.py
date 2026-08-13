@@ -1682,18 +1682,28 @@ def render_html(
         // Event delegation на <tbody>: один handler на parent вместо
         // N штук на каждом шевроне/баре. Устойчиво к meta-refresh и к
         // случаям, когда часть DOM пересоздаётся.
+        //
+        // NB: ev.target может быть TEXT NODE (напр. символ ▸ внутри
+        // <span class="chevron">). closest() есть только на Element,
+        // поэтому поднимаемся на parentElement если нужно. Иначе
+        // delegation молча не срабатывает — handler не вызывается.
         var tbody = document.querySelector("table tbody");
         if (!tbody) return;
+        function resolveEl(t) {{
+          if (!t) return null;
+          if (t.nodeType === 1) return t;
+          if (t.nodeType === 3) return t.parentElement;
+          return null;
+        }}
         tbody.addEventListener("click", function (ev) {{
-          var t = ev.target;
-          // Chevron: клик мог прийти на сам span или на его text-node
-          // ребёнка (символ ▸). Ищем ближайший .chevron.
-          var chev = t.closest && t.closest(".chevron");
+          var el = resolveEl(ev.target);
+          if (!el || !el.closest) return;
+          var chev = el.closest(".chevron");
           if (chev) {{
             onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
             return;
           }}
-          var bar = t.closest && t.closest(".day-bar");
+          var bar = el.closest(".day-bar");
           if (bar) {{
             onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
             return;
@@ -1702,14 +1712,15 @@ def render_html(
         // Keydown — отдельно, чтобы не дублировать логику.
         tbody.addEventListener("keydown", function (ev) {{
           if (ev.key !== "Enter" && ev.key !== " ") return;
-          var t = ev.target;
-          var chev = t.closest && t.closest(".chevron");
+          var el = resolveEl(ev.target);
+          if (!el || !el.closest) return;
+          var chev = el.closest(".chevron");
           if (chev) {{
             ev.preventDefault();
             onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
             return;
           }}
-          var bar = t.closest && t.closest(".day-bar");
+          var bar = el.closest(".day-bar");
           if (bar) {{
             ev.preventDefault();
             onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
