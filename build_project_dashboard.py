@@ -87,7 +87,8 @@ class ProjectRow:
     """Одна строка таблицы project dashboard.
 
     Все даты — MSK. `max_ms` нужен для сортировки "свежие сверху" — это
-    MAX(created_at_ms) среди сессий проекта в окне.
+    MAX(created_at_ms) среди сессий проекта в окне. `time_series` — None
+    для проектов без token_usage в окне (такие строки без шеврона).
     """
     project: str
     last_update: date
@@ -96,6 +97,26 @@ class ProjectRow:
     tokens: int
     sessions: int
     is_active: bool
+    time_series: "ProjectTimeSeries | None" = None
+
+
+@dataclass(frozen=True)
+class ProjectTimeSeries:
+    """Per-project time series для inline-зоны под строкой таблицы.
+
+    `days`  — {msk_date: tokens} для всех дней в окне (включая пустые —
+              рендер показывает их как empty bar). Гарантированно покрывает
+              непрерывный диапазон [first_day .. last_day] без пропусков,
+              т.е. пустые дни между активностями тоже присутствуют с value=0.
+    `hours` — {(msk_date, msk_hour): tokens} для 24h stream выбранного дня.
+    `first_day` / `last_day` — MSK dates, ограничивают дневной ряд. None,
+              если в окне вообще нет token_usage (тогда dataclass не
+              создаётся, ProjectRow.time_series = None).
+    """
+    days: dict[date, int]
+    hours: dict[tuple[date, int], int]
+    first_day: date
+    last_day: date
 
 
 # ---- CLI -------------------------------------------------------------------
@@ -193,8 +214,13 @@ def project_from_workspace(workspace_dir: str | None) -> str | None:
 
 def collect_projects(
     con: sqlite3.Connection, start_ts_ms: int, end_ts_ms: int
-) -> list[ProjectRow]:
+) -> tuple[list[ProjectRow], dict[str, str]]:
     """Собрать ProjectRow для окна [start_ts_ms, end_ts_ms).
+
+    Возвращает (rows, sid_to_project), где sid_to_project — маппинг
+    session_id → project slug для всех сессий, прошедших meta-workspace
+    filter. Используется collect_time_series для join'а token_usage по
+    project без повторного SQL на sessions.
 
     Источники:
       - local_runtime_message_rows — duration, requests, session_id список
@@ -212,8 +238,8 @@ def collect_projects(
          строк юзер может поменять кликом по колонке (см. render_html).
 
     Edge cases:
-      - Нет сообщений в окне → []
-      - Все сессии с meta/None workspaceDir → []
+      - Нет сообщений в окне → ([], {})
+      - Все сессии с meta/None workspaceDir → ([], {})
       - Сессия с messages, но без token_usage → tokens += 0
       - Сессия без record_json (или битый JSON) → workspaceDir=None,
         status=None → проект skip, is_active=False.
@@ -233,7 +259,7 @@ def collect_projects(
         msg_rows[str(sid)] = (int(mn), int(mx), int(user))
 
     if not msg_rows:
-        return []
+        return [], {}
 
     # 2. Tokens в окне.
     tok_sql = """
@@ -265,6 +291,7 @@ def collect_projects(
 
     # 4. Group by project.
     grouped: dict[str, dict] = {}
+    sid_to_project: dict[str, str] = {}
     for sid, (mn, mx, _user) in msg_rows.items():
         rec = meta.get(sid, {})
         workspace_dir = (
@@ -277,6 +304,9 @@ def collect_projects(
         project = project_from_workspace(workspace_dir)
         if project is None:
             continue  # meta-workspace или пустой — пропускаем
+
+        # Параллельно строим sid→project для collect_time_series.
+        sid_to_project[sid] = project
 
         tokens = tok_rows.get(sid, 0)
         duration_ms = mx - mn  # > 0 гарантировано (есть MIN и MAX в одной группе)
@@ -312,7 +342,101 @@ def collect_projects(
 
     # 6. Sort: most recent first, tie-break tokens desc.
     rows.sort(key=lambda r: (r.max_ms, r.tokens), reverse=True)
-    return rows
+    return rows, sid_to_project
+
+
+def collect_time_series(
+    con: sqlite3.Connection,
+    start_ts_ms: int,
+    end_ts_ms: int,
+    sid_to_project: dict[str, str],
+) -> dict[str, ProjectTimeSeries]:
+    """Per-project per-day и per-(day,hour) агрегаты токенов в окне.
+
+    Возвращает {project: ProjectTimeSeries} только для проектов с ≥ 1 turn'ом
+    token_usage в окне. Проекты без token_usage в окне в словаре отсутствуют —
+    в ProjectRow.time_series для них остаётся None (строка без шеврона).
+
+    `sid_to_project` — маппинг session_id → project slug, построенный тем же
+    join'ом что и collect_projects (workspaceDir → slug). Передаётся извне,
+    чтобы не дублировать SQL на sessions.
+
+    Дневной ряд делается непрерывным [first_day..last_day] — пустые дни между
+    активностями тоже входят с value=0, чтобы дневной чарт не «прыгал»
+    по шкале и не терял единый визуальный ритм.
+
+    Edge cases:
+      - Пустой sid_to_project (нет сессий в окне) → {}.
+      - Turn'ы от session_id, которых нет в sid_to_project (битый join) →
+        skip. Не должно случаться при корректном вызове из main().
+      - Turn'ы с ts вне окна (будущее или до start_ts_ms) → 0, потому что
+        SQL уже отрезал по WHERE ts >= ? AND ts < ?.
+    """
+    if not sid_to_project:
+        return {}
+
+    # Один SQL: GROUP BY session_id, msk_date, msk_hour. Локальное
+    # преобразование ms→MSK (+3 hours) делаем в SQLite — детерминированно,
+    # не зависит от локали машины. Шаблон идентичен build_dashboard.py::
+    # aggregate_by_hour.
+    sql = """
+        SELECT
+            session_id,
+            date(ts / 1000, 'unixepoch', '+3 hours')                          AS msk_date,
+            CAST(strftime('%H', ts / 1000, 'unixepoch', '+3 hours') AS INT)  AS msk_hour,
+            COALESCE(SUM(input_tokens + output_tokens), 0)                    AS tokens
+        FROM local_runtime_token_usage
+        WHERE ts >= ? AND ts < ?
+        GROUP BY session_id, msk_date, msk_hour
+    """
+
+    # Промежуточные буферы: per-project словари day→sum и (day,hour)→sum.
+    days_buf: dict[str, dict[date, int]] = {}
+    hours_buf: dict[str, dict[tuple[date, int], int]] = {}
+    first_day: dict[str, date] = {}
+    last_day: dict[str, date] = {}
+
+    for sid, d_str, h, tokens in con.execute(sql, (start_ts_ms, end_ts_ms)):
+        sid_s = str(sid)
+        project = sid_to_project.get(sid_s)
+        if project is None:
+            continue
+        d = date.fromisoformat(str(d_str))
+        hour = int(h)
+        t = int(tokens)
+        if t <= 0:
+            continue
+
+        d_b = days_buf.setdefault(project, {})
+        d_b[d] = d_b.get(d, 0) + t
+
+        h_b = hours_buf.setdefault(project, {})
+        h_b[(d, hour)] = h_b.get((d, hour), 0) + t
+
+        if project not in first_day or d < first_day[project]:
+            first_day[project] = d
+        if project not in last_day or d > last_day[project]:
+            last_day[project] = d
+
+    # Дополняем дневной ряд пустыми днями в [first_day..last_day]. Это
+    # гарантирует непрерывную X-шкалу для чарта.
+    result: dict[str, ProjectTimeSeries] = {}
+    for project, d_b in days_buf.items():
+        fd = first_day[project]
+        ld = last_day[project]
+        # Сборка полного days dict
+        full_days: dict[date, int] = {}
+        d = fd
+        while d <= ld:
+            full_days[d] = d_b.get(d, 0)
+            d += timedelta(days=1)
+        result[project] = ProjectTimeSeries(
+            days=full_days,
+            hours=hours_buf.get(project, {}),
+            first_day=fd,
+            last_day=ld,
+        )
+    return result
 
 
 # ---- formatting ------------------------------------------------------------
@@ -425,6 +549,326 @@ def rate_sort_value(tokens: int, duration_ms: int) -> int:
 
 # ---- render ----------------------------------------------------------------
 
+# Короткая подпись дня в формате "13 авг" (DD + сокращённый русский месяц).
+# Используется в дневном ряду inline-зоны и в заголовке выбранного дня.
+_MONTHS_RU_SHORT: tuple[str, ...] = (
+    "янв", "фев", "мар", "апр", "май", "июн",
+    "июл", "авг", "сен", "окт", "ноя", "дек",
+)
+
+
+def format_day_short(d: date) -> str:
+    """DD MMM (рус.), напр. '13 авг', '1 сен'. Без leading zero на дне."""
+    return f"{d.day} {_MONTHS_RU_SHORT[d.month - 1]}"
+
+
+def format_day_iso(d: date) -> str:
+    """ISO 'YYYY-MM-DD' для data-атрибутов. Дефолт Python isoformat()."""
+    return d.isoformat()
+
+
+def format_pct(value: int, total: int) -> str:
+    """Доля в процентах, целое число без '%'. total=0 → '0'."""
+    if total <= 0:
+        return "0"
+    pct = int(round(value * 100 / total))
+    if pct < 0:
+        return "0"
+    if pct > 100:
+        return "100"
+    return str(pct)
+
+
+# Лог- или linear шкала для дневного ряда. На данных проекта 0807_db-contingent
+# (4 дня, max=122M, min=12M, ratio 10x) линейная шкала сплющивает малые дни
+# до ~10% от высоты — плохо читается. На 0717_docstudio (4 дня, ratio 1.9x)
+# разница между шкалами минимальна. Решаем per-project: ratio > 5x → log.
+LOG_SCALE_RATIO_THRESHOLD: float = 5.0
+
+
+def bar_height_pct(value: int, max_value: int, use_log: bool) -> float:
+    """Высота бара в процентах (0..100) для per-project normalized Y.
+
+    Linear:  value / max * 100, floor 2% (как в build_dashboard.py::_pct).
+    Log:     log(1+v) / log(1+max) * 100, floor 2%. Используется при
+             max_value / min_non_zero > LOG_SCALE_RATIO_THRESHOLD.
+    Empty:   max=0 → 0% (вся строка пустая, не бывает при наличии time_series).
+    """
+    if value <= 0 or max_value <= 0:
+        return 0.0
+    if use_log:
+        import math
+        return max(2.0, min(100.0, (math.log1p(value) / math.log1p(max_value)) * 100))
+    return max(2.0, min(100.0, (value / max_value) * 100))
+
+
+def render_project_detail(
+    project_slug: str,
+    ts: ProjectTimeSeries,
+    total_tokens: int,
+    now_msk: datetime,
+) -> str:
+    """HTML inline-зоны под строкой проекта: дневной ряд + 24h для выбранного дня.
+
+    Структура (всё внутри одной <td colspan="6">):
+      .detail-inner
+        .detail-header         "N дней · всего X · пик DD MMM (Y)"
+        .day-chart             грид-баров (1..N дней)
+          .day-bars            row of N .day-bar элементов
+          .day-labels          row of N .day-label элементов (DD)
+        .day-separator         "DD MMM · total · X.XM" (про выбранный день)
+        .hour-chart            сюда JS подменяет innerHTML при клике
+          .chart-shell.chart-shell--24h
+            .hours-24h         24 .hour-cell для initial выбранного дня
+        <script type="application/json" class="day-hour-map">
+          {"YYYY-MM-DD": {"0": N, ..., "23": N}, ...}
+        </script>
+        <script type="application/json" class="day-meta">
+          {"max_value": N, "use_log": bool, "selected_day": "YYYY-MM-DD"}
+        </script>
+
+    Клик по .day-bar: JS читает .day-hour-map, обновляет .hour-chart и
+    .day-separator, переключает класс .selected на барах.
+
+    Per-project normalized Y (100% = max за этот проект). Лог-шкала включается
+    автоматически если max/min (по ненулевым дням) > LOG_SCALE_RATIO_THRESHOLD.
+    1-day проект: один full-width бар с подписью «единственный день активности»,
+    24h рендерится сразу.
+    """
+    days_sorted: list[date] = sorted(ts.days.keys())
+    if not days_sorted:
+        return ""
+
+    # max value по ненулевым дням для per-project Y.
+    nonzero = [v for v in ts.days.values() if v > 0]
+    if not nonzero:
+        max_value = 0
+        use_log = False
+    else:
+        max_value = max(nonzero)
+        min_nonzero = min(nonzero)
+        # ratio max/min: 0 если все дни равны (тогда log == linear)
+        ratio = max_value / min_nonzero if min_nonzero > 0 else 1.0
+        use_log = ratio > LOG_SCALE_RATIO_THRESHOLD
+
+    # Peak day = день с максимальным value (для заголовка).
+    peak_day = max(ts.days.items(), key=lambda kv: kv[1])[0] if max_value > 0 else days_sorted[0]
+    peak_value = ts.days.get(peak_day, 0)
+
+    # Initial выбранный день = самый свежий день с данными. Для 1-day проекта
+    # это и есть единственный день.
+    days_with_data = [d for d in days_sorted if ts.days.get(d, 0) > 0]
+    selected_day = days_with_data[-1] if days_with_data else days_sorted[-1]
+    is_one_day = len(days_sorted) == 1
+
+    # Заголовок
+    n_days_label = "1 день" if is_one_day else f"{len(days_sorted)} дней"
+    peak_label = f"{format_day_short(peak_day)} ({format_tokens(peak_value)})"
+    header = (
+        f'<div class="detail-header">'
+        f'{n_days_label} · всего {html.escape(format_tokens(total_tokens))}'
+        f' · пик {html.escape(peak_label)}'
+        f'</div>'
+    )
+
+    # Дневной ряд: один бар на день. height_pct считаем здесь, в Python —
+    # max известен на момент сборки.
+    day_bars: list[str] = []
+    day_labels: list[str] = []
+    for d in days_sorted:
+        v = ts.days.get(d, 0)
+        h_pct = bar_height_pct(v, max_value, use_log)
+        is_peak = (v > 0 and v == max_value)
+        is_selected = (d == selected_day)
+        bar_cls = "day-bar"
+        if v <= 0:
+            bar_cls += " day-bar--empty"
+        if is_peak:
+            bar_cls += " day-bar--peak"
+        if is_selected:
+            bar_cls += " day-bar--selected"
+        # Tooltip: "DD MMM · X.XM · NN%". Используем стандартный title=
+        # чтобы не плодить кастомный tooltip-компонент.
+        tip = (
+            f"{format_day_short(d)} · {format_tokens(v)} · "
+            f"{format_pct(v, total_tokens)}%"
+        )
+        day_bars.append(
+            f'<div class="{bar_cls}" '
+            f'data-day="{format_day_iso(d)}" '
+            f'data-tokens="{v}" '
+            f'style="height: {h_pct:.1f}%" '
+            f'title="{html.escape(tip)}" '
+            f'role="button" tabindex="0" aria-label="{html.escape(tip)}">'
+            f'</div>'
+        )
+        # Лейбл: только день (без месяца) — месяц один на всю короткую серию.
+        day_labels.append(f'<span class="day-label">{d.day:02d}</span>')
+
+    one_day_caption = ""
+    if is_one_day:
+        one_day_caption = (
+            f'<div class="day-caption">'
+            f'единственный день активности · {html.escape(format_tokens(ts.days[days_sorted[0]]))}'
+            f'</div>'
+        )
+
+    day_chart = (
+        f'<div class="day-chart">'
+        f'<div class="day-bars">{"".join(day_bars)}</div>'
+        f'<div class="day-labels">{"".join(day_labels)}</div>'
+        f'{one_day_caption}'
+        f'</div>'
+    )
+
+    # Separator + initial 24h для выбранного дня
+    sep_text = (
+        f'{format_day_short(selected_day)} · '
+        f'{html.escape(format_tokens(ts.days.get(selected_day, 0)))}'
+    )
+    day_separator = (
+        f'<div class="day-separator" data-selected-day="{format_day_iso(selected_day)}">'
+        f'{html.escape(sep_text)}'
+        f'</div>'
+    )
+    hour_chart_initial = render_24h_for_day(ts, selected_day, now_msk)
+    hour_chart = (
+        f'<div class="hour-chart" data-project="{html.escape(project_slug)}">'
+        f'{hour_chart_initial}'
+        f'</div>'
+    )
+
+    # day-hour-map: {day_iso: {hour: tokens, ...}} для всех дней проекта.
+    # Используется JS'ом при клике на day-bar — пересобирает .hour-chart.
+    day_hour_map: dict[str, dict[str, int]] = {}
+    for d in days_sorted:
+        per_hour: dict[str, int] = {}
+        for h in range(24):
+            per_hour[str(h)] = int(ts.hours.get((d, h), 0))
+        day_hour_map[format_day_iso(d)] = per_hour
+
+    day_meta = {
+        "max_value": int(max_value),
+        "use_log": bool(use_log),
+        "selected_day": format_day_iso(selected_day),
+        "total_tokens": int(total_tokens),
+    }
+
+    detail_inner = (
+        f'<div class="detail-inner">'
+        f'{header}'
+        f'{day_chart}'
+        f'{day_separator}'
+        f'{hour_chart}'
+        f'<script type="application/json" class="day-hour-map">'
+        f'{html.escape(json.dumps(day_hour_map, ensure_ascii=False))}'
+        f'</script>'
+        f'<script type="application/json" class="day-meta">'
+        f'{html.escape(json.dumps(day_meta, ensure_ascii=False))}'
+        f'</script>'
+        f'</div>'
+    )
+    return detail_inner
+
+
+def render_24h_for_day(
+    ts: ProjectTimeSeries,
+    target_day: date,
+    now_msk: datetime,
+) -> str:
+    """24h stream для конкретного дня проекта (тот же визуал, что в
+    build_dashboard.py::_render_24h_stream, но inline в project-dashboard).
+
+    Семантика states для target_day:
+      - target_day < today  → все 24 часа либо active (data>0), peak (top-1),
+                              либо empty (data=0). Никаких future/current.
+      - target_day == today → стандартные active/peak/current/future/empty
+                              относительно now_msk.hour.
+      - target_day > today  → не должно случаться (окно обрезано по now_msk).
+    """
+    target_iso = format_day_iso(target_day)
+    today_msk_date = now_msk.date()
+    is_today = (target_day == today_msk_date)
+
+    # Достаём 24 значений
+    values: list[int] = []
+    for h in range(24):
+        values.append(int(ts.hours.get((target_day, h), 0)))
+
+    # peak: top-1 value > 0
+    peak_value = max(values) if values else 0
+    peak_hours: set[int] = set()
+    if peak_value > 0:
+        for h, v in enumerate(values):
+            if v == peak_value:
+                peak_hours.add(h)
+                break  # берём первый (наименьший hour) — детерминированно
+
+    # scale_max для active/current/peak. Если всё пусто — 1 (защита от /0).
+    if is_today:
+        past_values = [
+            values[h] for h in range(now_msk.hour + 1)
+        ]
+    else:
+        past_values = list(values)  # все 24 часа — "прошлые" для не-сегодня
+    scale_max = max(past_values) if past_values else 1
+    if scale_max <= 0:
+        scale_max = 1
+
+    def pct(v: int) -> float:
+        if v <= 0 or scale_max <= 0:
+            return 0.0
+        return max(2.0, min(100.0, (v / scale_max) * 100))
+
+    cells: list[str] = []
+    for h in range(24):
+        v = values[h]
+        # state
+        if is_today:
+            if h < now_msk.hour:
+                state = "active"
+            elif h == now_msk.hour:
+                state = "current"
+            else:
+                state = "future"
+        else:
+            # Past day
+            state = "active"
+
+        if h in peak_hours:
+            state = "peak"  # override
+        if state in ("active", "current") and v <= 0:
+            state = "empty"
+
+        cls = f"bar-24h {state}"
+        h_pct = pct(v)
+
+        title = f"{h:02d}:00–{h:02d}:59: {format_tokens(v) if v else 'нет данных'}"
+        label_cls = "hour-label"
+        if state == "future":
+            label_cls += " hour-label--future"
+
+        # peak-value label — только если state == peak
+        peak_value_html = (
+            f'<span class="peak-value">{format_tokens(v)}</span>'
+            if state == "peak" else ""
+        )
+
+        cells.append(
+            f'<div class="hour-cell" data-hour="{h}">'
+            f'{peak_value_html}'
+            f'<div class="{cls}" style="height:{h_pct:.1f}%" title="{html.escape(title)}"></div>'
+            f'<span class="{label_cls}">{h:02d}</span>'
+            f"</div>"
+        )
+
+    return (
+        f'<div class="chart-shell chart-shell--24h">'
+        f'<div class="hours-24h">{"".join(cells)}</div>'
+        f"</div>"
+    )
+
+
 def render_html(
     rows: list[ProjectRow], now_msk: datetime, weeks: list[WeekSpan]
 ) -> str:
@@ -436,6 +880,11 @@ def render_html(
     .active + бейджем "active" в первой колонке.
     """
     week_labels = ", ".join(w.label for w in weeks)
+    # MSK now, расщеплённое на ISO date и hour — прокидывается в JS, чтобы
+    # при клике по day-bar корректно решать "is target day today" (будущие
+    # часы сегодняшнего дня получают state="future", не "active").
+    now_msk_iso = now_msk.date().isoformat()
+    now_msk_hour = now_msk.hour
     projects_total = len(rows)
     active_total = sum(1 for r in rows if r.is_active)
     sessions_total = sum(r.sessions for r in rows)
@@ -447,6 +896,10 @@ def render_html(
     # formatted-версии остаются в тексте ячейки ("1h 39m" → "5940000",
     # "8.81M" → "8810000", "1.23M/h" → "1230000"). Это развязывает
     # форматирование и сортировку.
+    #
+    # Inline-зона (шеlvrон + detail-row): рендерится для каждой строки с
+    # time_series. Без time_series (0-day проекты) — нет ни шеврона, ни
+    # detail-row, как раньше.
     body_rows: list[str] = []
     for r in rows:
         cls = ' class="active"' if r.is_active else ""
@@ -462,9 +915,24 @@ def render_html(
         # data-sort: ISO date для last_update, raw int для остальных метрик,
         # raw slug для project (localeCompare в JS).
         date_sort = r.last_update.isoformat()  # "YYYY-MM-DD" — ISO-лексикографически = хронологически
+
+        # Шеврон: только если у проекта есть time_series. Иначе в первой ячейке
+        # только название — никаких лишних контролов над мета-данными.
+        if r.time_series is not None:
+            chevron = (
+                f'<span class="chevron" role="button" tabindex="0" '
+                f'aria-expanded="false" aria-controls="detail-{project_esc}">'
+                f'▸</span>'
+            )
+            row_data = f' data-project="{project_esc}"'
+        else:
+            chevron = ""
+            row_data = ""
+
         body_rows.append(
-            f"      <tr{cls}>"
-            f"<td class=\"project\" data-col=\"project\" data-sort=\"{project_esc}\">{project_esc}{badge}</td>"
+            f"      <tr{cls}{row_data}>"
+            f"<td class=\"project\" data-col=\"project\" data-sort=\"{project_esc}\">"
+            f"{chevron}{project_esc}{badge}</td>"
             f"<td class=\"r\" data-col=\"last_update\" data-sort=\"{date_sort}\">{date_esc}</td>"
             f"<td class=\"r\" data-col=\"duration\" data-sort=\"{r.duration_ms}\">{dur_esc}</td>"
             f"<td class=\"r\" data-col=\"tokens\" data-sort=\"{r.tokens}\">{tok_esc}</td>"
@@ -472,6 +940,20 @@ def render_html(
             f"<td class=\"r\" data-col=\"sessions\" data-sort=\"{r.sessions}\">{sess_esc}</td>"
             f"</tr>"
         )
+
+        # Detail row (скрыт по умолчанию, JS раскрывает по клику на шеврон).
+        if r.time_series is not None:
+            detail_inner = render_project_detail(
+                r.project, r.time_series, r.tokens, now_msk
+            )
+            body_rows.append(
+                f'      <tr class="detail-row" '
+                f'id="detail-{project_esc}" '
+                f'data-project="{project_esc}" hidden>'
+                f'<td colspan="6" class="detail-cell">'
+                f'{detail_inner}'
+                f'</td></tr>'
+            )
     body_html = "\n".join(body_rows) if body_rows else (
         '      <tr><td colspan="6" class="empty center">'
         "Нет проектов в окне</td></tr>"
@@ -610,6 +1092,190 @@ def render_html(
     }}
     .empty {{ color: var(--muted); }}
     .center {{ text-align: center; padding: 32px 10px; }}
+
+    /* === Chevron (toggle для inline-зоны) === */
+    .chevron {{
+      display: inline-block;
+      width: 14px;
+      margin-right: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s ease, transform 0.15s ease;
+      text-align: center;
+    }}
+    .chevron:hover {{ color: var(--ink); }}
+    .chevron:focus-visible {{
+      outline: 1px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }}
+    .chevron[aria-expanded="true"] {{
+      color: var(--ink);
+      transform: rotate(90deg);
+      display: inline-block;
+    }}
+    tbody td.project {{ padding-left: 14px; }}
+
+    /* === Detail row (inline-зона) === */
+    tbody tr.detail-row > td.detail-cell {{
+      padding: 0;
+      background: var(--panel-2);
+      border-bottom: 1px solid var(--line);
+    }}
+    .detail-inner {{
+      padding: 18px 22px 22px;
+    }}
+    .detail-header {{
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }}
+
+    /* === Day chart (дневной ряд) === */
+    .day-chart {{
+      margin-bottom: 14px;
+    }}
+    .day-bars {{
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      gap: 4px;
+      height: 96px;
+      align-items: end;
+    }}
+    .day-bar {{
+      background: var(--accent-2);
+      border-radius: 6px 6px 2px 2px;
+      min-height: 2px;
+      cursor: pointer;
+      transition: filter 0.15s ease, box-shadow 0.15s ease, outline-offset 0.15s ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    }}
+    .day-bar:hover {{ filter: brightness(1.18); }}
+    .day-bar:focus-visible {{
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }}
+    .day-bar--empty {{
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none;
+      cursor: default;
+    }}
+    .day-bar--empty:hover {{ filter: none; }}
+    .day-bar--peak {{
+      box-shadow: none;
+    }}
+    .day-bar--selected {{
+      outline: 1px solid rgba(255, 255, 255, 0.55);
+      outline-offset: -1px;
+    }}
+    .day-labels {{
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      gap: 4px;
+      margin-top: 6px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+    }}
+    .day-caption {{
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+    }}
+
+    /* === Day separator (между daily chart и 24h stream) === */
+    .day-separator {{
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      margin: 6px 0 14px;
+    }}
+
+    /* === 24h stream (inline-дубль из build_dashboard.py) === */
+    .chart-shell--24h {{
+      position: relative;
+      padding: 18px 12px 10px;
+    }}
+    .hours-24h {{
+      display: grid;
+      grid-template-columns: repeat(24, 1fr);
+      gap: 4px;
+    }}
+    .hour-cell {{
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 6px;
+      min-height: 96px;
+    }}
+    .peak-value {{
+      position: absolute;
+      top: 4px;
+      left: 0;
+      right: 0;
+      z-index: 1;
+      text-align: center;
+      color: #e6ebf6;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+    }}
+    .bar-24h {{
+      width: 100%;
+      flex: 0 1 auto;
+      align-self: end;
+      border-radius: 6px 6px 2px 2px;
+      min-height: 2px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+      transition: filter 0.15s ease;
+    }}
+    .bar-24h:hover {{ filter: brightness(1.18); }}
+    .bar-24h.active,
+    .bar-24h.peak,
+    .bar-24h.current {{
+      background: #216e39;
+    }}
+    .bar-24h.peak {{
+      box-shadow: none;
+    }}
+    .bar-24h.current {{
+      outline: 1px solid rgba(255, 255, 255, 0.55);
+      outline-offset: -1px;
+    }}
+    .bar-24h.future {{
+      height: 6px !important;
+      background: transparent;
+      border: 1px dashed rgba(255, 255, 255, 0.18);
+      box-shadow: none;
+      opacity: 0.55;
+    }}
+    .bar-24h.empty {{
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none;
+    }}
+    .hour-label {{
+      flex: none;
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+    }}
+    .hour-label--future {{ opacity: 0.4; }}
+
     .footer {{
       margin-top: 16px;
       padding-top: 14px;
@@ -797,6 +1463,239 @@ def render_html(
       }}
     }})();
   </script>
+
+  <script>
+    // Server-side timestamp в MSK, нужен JS'у для решения "is target day today"
+    // при пересборке 24h после клика по day-bar. Передаётся из билдера
+    // (формат ISO date + hour MSK).
+    window.__NOW_MSK_ISO__ = "{now_msk_iso}";
+    window.__NOW_MSK_HOUR__ = {now_msk_hour};
+  </script>
+
+  <script>
+    // === Inline-зона: шеврон + day→24h switch ===========================
+    //
+    // Контракт (рендерится в build_project_dashboard.py):
+    //   - <span class="chevron" aria-controls="detail-<slug>">  в первой ячейке
+    //   - <tr class="detail-row" id="detail-<slug>" hidden>      сразу после строки
+    //   - внутри detail-row: .day-bars / .day-labels / .day-separator /
+    //     .hour-chart + <script class="day-hour-map"> + <script class="day-meta">
+    //   - now_msk_iso = today MSK date как ISO строка (глобал от билдера)
+    //
+    // Состояние не persistent: после meta-refresh всё сворачивается.
+    // Логика:
+    //   - click на chevron → toggle detail-row.hidden + chevron[aria-expanded]
+    //   - click на day-bar → JS читает day-hour-map, пересобирает .hour-chart
+    //     innerHTML для выбранного дня, обновляет .day-separator, переключает
+    //     класс .day-bar--selected на барах.
+    (function () {{
+      "use strict";
+      var NOW_MSK_ISO = window.__NOW_MSK_ISO__ || "";
+      var NOW_MSK_HOUR = (typeof window.__NOW_MSK_HOUR__ === "number")
+        ? window.__NOW_MSK_HOUR__ : -1;
+
+      function fmtTokens(n) {{
+        // Копия Python format_tokens: K=1dp, M=2dp, B=2dp, strip trailing
+        // zero + dot. Нужна в JS, чтобы при click'е пересчитать tooltip
+        // (хотя фактически tooltip'ы статичные, fmtTokens нужен для
+        // атрибутов hour-cell title в пересобранном 24h).
+        if (n < 0) return "0";
+        if (n < 1000) return String(n);
+        if (n < 1e6) {{
+          var s = (n / 1e3).toFixed(1);
+          if (s.indexOf(".") >= 0) s = s.replace(/0+$/, "").replace(/\\.$/, "");
+          return s + "K";
+        }}
+        if (n < 1e9) {{
+          var s2 = (n / 1e6).toFixed(2);
+          if (s2.indexOf(".") >= 0) s2 = s2.replace(/0+$/, "").replace(/\\.$/, "");
+          return s2 + "M";
+        }}
+        var s3 = (n / 1e9).toFixed(2);
+        if (s3.indexOf(".") >= 0) s3 = s3.replace(/0+$/, "").replace(/\\.$/, "");
+        return s3 + "B";
+      }}
+
+      function fmtDayShort(iso) {{
+        // "YYYY-MM-DD" → "DD MMM" (рус.). Копия Python format_day_short.
+        var months = ["янв","фев","мар","апр","май","июн",
+                      "июл","авг","сен","окт","ноя","дек"];
+        var parts = iso.split("-");
+        var d = parseInt(parts[2], 10);
+        var m = parseInt(parts[1], 10) - 1;
+        return d + " " + months[m];
+      }}
+
+      function parseJSONScript(cls) {{
+        var el = document.querySelector("." + cls);
+        if (!el) return null;
+        try {{ return JSON.parse(el.textContent); }}
+        catch (e) {{ return null; }}
+      }}
+
+      // Сборка 24h cells для конкретного дня. Та же логика, что в
+      // Python render_24h_for_day. Возвращает HTML string 24 ячеек.
+      function build24hCells(hourMap, targetDay) {{
+        var isToday = (targetDay === NOW_MSK_ISO);
+        var nowHour = isToday ? NOW_MSK_HOUR : -1;
+        var values = [];
+        for (var h = 0; h < 24; h++) {{
+          values.push(hourMap[String(h)] || 0);
+        }}
+        // peak: top-1 (>0), наименьший hour
+        var peakHour = -1;
+        var peakV = 0;
+        for (var hh = 0; hh < 24; hh++) {{
+          if (values[hh] > peakV) {{ peakV = values[hh]; peakHour = hh; }}
+        }}
+        // scale_max
+        var pastMax = 0;
+        for (var h2 = 0; h2 < 24; h2++) {{
+          if (!isToday || h2 <= nowHour) {{
+            if (values[h2] > pastMax) pastMax = values[h2];
+          }}
+        }}
+        if (pastMax <= 0) pastMax = 1;
+
+        function pct(v) {{
+          if (v <= 0 || pastMax <= 0) return 0;
+          return Math.max(2.0, Math.min(100.0, (v / pastMax) * 100));
+        }}
+
+        var out = [];
+        for (var h3 = 0; h3 < 24; h3++) {{
+          var v = values[h3];
+          var state;
+          if (isToday) {{
+            if (h3 < nowHour) state = "active";
+            else if (h3 === nowHour) state = "current";
+            else state = "future";
+          }} else {{
+            state = "active";
+          }}
+          if (h3 === peakHour && v > 0) state = "peak";
+          if ((state === "active" || state === "current") && v <= 0) state = "empty";
+
+          var cls = "bar-24h " + state;
+          var hPct = pct(v);
+          var title = (h3 < 10 ? "0" : "") + h3 + ":00–" +
+                      (h3 < 10 ? "0" : "") + h3 + ":59: " +
+                      (v ? fmtTokens(v) : "нет данных");
+          var labelCls = "hour-label" + (state === "future" ? " hour-label--future" : "");
+          var peakLabel = state === "peak"
+            ? '<span class="peak-value">' + fmtTokens(v) + '</span>'
+            : "";
+          out.push(
+            '<div class="hour-cell" data-hour="' + h3 + '">' +
+            peakLabel +
+            '<div class="' + cls + '" style="height:' + hPct.toFixed(1) + '%" title="' +
+            title.replace(/"/g, "&quot;") + '"></div>' +
+            '<span class="' + labelCls + '">' + (h3 < 10 ? "0" : "") + h3 + '</span>' +
+            '</div>'
+          );
+        }}
+        return out.join("");
+      }}
+
+      // Сборка нового 24h chart-shell для выбранного дня. Полная замена
+      // innerHTML у .hour-chart.
+      function rebuild24h(detailRow, targetDay) {{
+        var map = parseJSONScript("day-hour-map");
+        if (!map) return;
+        var hourMap = map[targetDay];
+        if (!hourMap) return;
+        var cells = build24hCells(hourMap, targetDay);
+        var hourChart = detailRow.querySelector(".hour-chart");
+        if (!hourChart) return;
+        hourChart.innerHTML =
+          '<div class="chart-shell chart-shell--24h">' +
+          '<div class="hours-24h">' + cells + '</div>' +
+          '</div>';
+
+        // Обновляем separator
+        var sep = detailRow.querySelector(".day-separator");
+        if (sep) {{
+          var tokens = 0;
+          for (var h = 0; h < 24; h++) tokens += (hourMap[String(h)] || 0);
+          sep.textContent = fmtDayShort(targetDay) + " · " + fmtTokens(tokens);
+          sep.setAttribute("data-selected-day", targetDay);
+        }}
+
+        // Переключаем selected на барах
+        var bars = detailRow.querySelectorAll(".day-bar");
+        for (var i = 0; i < bars.length; i++) {{
+          if (bars[i].getAttribute("data-day") === targetDay) {{
+            bars[i].classList.add("day-bar--selected");
+          }} else {{
+            bars[i].classList.remove("day-bar--selected");
+          }}
+        }}
+      }}
+
+      function onChevronClick(ev) {{
+        var chev = ev.currentTarget;
+        var detailId = chev.getAttribute("aria-controls");
+        if (!detailId) return;
+        var detail = document.getElementById(detailId);
+        if (!detail) return;
+        ev.stopPropagation();
+        var expanded = chev.getAttribute("aria-expanded") === "true";
+        if (expanded) {{
+          detail.setAttribute("hidden", "");
+          chev.setAttribute("aria-expanded", "false");
+        }} else {{
+          detail.removeAttribute("hidden");
+          chev.setAttribute("aria-expanded", "true");
+        }}
+      }}
+
+      function onChevronKey(ev) {{
+        if (ev.key === "Enter" || ev.key === " ") {{
+          ev.preventDefault();
+          onChevronClick({{ currentTarget: ev.currentTarget }});
+        }}
+      }}
+
+      function onDayBarClick(ev) {{
+        var bar = ev.currentTarget;
+        if (bar.classList.contains("day-bar--empty")) return;
+        var day = bar.getAttribute("data-day");
+        if (!day) return;
+        ev.stopPropagation();
+        var detailRow = bar.closest("tr.detail-row");
+        if (!detailRow) return;
+        rebuild24h(detailRow, day);
+      }}
+
+      function onDayBarKey(ev) {{
+        if (ev.key === "Enter" || ev.key === " ") {{
+          ev.preventDefault();
+          onDayBarClick({{ currentTarget: ev.currentTarget }});
+        }}
+      }}
+
+      function init() {{
+        // Chevrons
+        var chevrons = document.querySelectorAll(".chevron");
+        for (var i = 0; i < chevrons.length; i++) {{
+          chevrons[i].addEventListener("click", onChevronClick);
+          chevrons[i].addEventListener("keydown", onChevronKey);
+        }}
+        // Day bars (только непустые реагируют на click — см. handler)
+        var bars = document.querySelectorAll(".day-bar");
+        for (var j = 0; j < bars.length; j++) {{
+          bars[j].addEventListener("click", onDayBarClick);
+          bars[j].addEventListener("keydown", onDayBarKey);
+        }}
+      }}
+
+      if (document.readyState === "loading") {{
+        document.addEventListener("DOMContentLoaded", init);
+      }} else {{
+        init();
+      }}
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -824,9 +1723,34 @@ def main() -> int:
 
     con = open_db(db_path)
     try:
-        rows = collect_projects(con, start_ts_ms, end_ts_ms)
+        rows, sid_to_project = collect_projects(con, start_ts_ms, end_ts_ms)
+        # Time series per project — отдельная агрегация по token_usage, join
+        # через sid_to_project (без повторного SQL на sessions). Для проектов
+        # без token_usage в окне time_series=None → в render_html они получают
+        # строку без шеврона.
+        ts_by_project = collect_time_series(
+            con, start_ts_ms, end_ts_ms, sid_to_project
+        )
     finally:
         con.close()
+
+    # Прикрепляем time_series к соответствующим ProjectRow. Сборка dict
+    # для O(1) lookup, потом итерируем rows. Порядок rows не меняем —
+    # сортировку делал collect_projects.
+    ts_lookup = {row.project: ts_by_project.get(row.project) for row in rows}
+    rows = [
+        ProjectRow(
+            project=row.project,
+            last_update=row.last_update,
+            max_ms=row.max_ms,
+            duration_ms=row.duration_ms,
+            tokens=row.tokens,
+            sessions=row.sessions,
+            is_active=row.is_active,
+            time_series=ts_lookup.get(row.project),
+        )
+        for row in rows
+    ]
 
     html_doc = render_html(rows, now_msk, weeks)
 
