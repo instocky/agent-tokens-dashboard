@@ -661,13 +661,21 @@ def render_project_detail(
     selected_day = days_with_data[-1] if days_with_data else days_sorted[-1]
     is_one_day = len(days_sorted) == 1
 
-    # Заголовок
+    # Заголовок. Hint «↓ клик по дню → 24h» — рядом с пиком, чтобы юзер
+    # не воспринимал дневной ряд как чисто декоративный (бары кликабельны,
+    # см. onDayBarClick). Не показываем для 1-day проекта — там один бар
+    # и так выбран, дополнительный hint шумит.
     n_days_label = "1 день" if is_one_day else f"{len(days_sorted)} дней"
     peak_label = f"{format_day_short(peak_day)} ({format_tokens(peak_value)})"
+    click_hint = (
+        "" if is_one_day
+        else '<span class="detail-hint">↓ клик по дню → 24h</span>'
+    )
     header = (
         f'<div class="detail-header">'
         f'{n_days_label} · всего {html.escape(format_tokens(total_tokens))}'
         f' · пик {html.escape(peak_label)}'
+        f'{click_hint}'
         f'</div>'
     )
 
@@ -688,11 +696,18 @@ def render_project_detail(
         if is_selected:
             bar_cls += " day-bar--selected"
         # Tooltip: "DD MMM · X.XM · NN%". Используем стандартный title=
-        # чтобы не плодить кастомный tooltip-компонент.
-        tip = (
-            f"{format_day_short(d)} · {format_tokens(v)} · "
-            f"{format_pct(v, total_tokens)}%"
-        )
+        # чтобы не плодить кастомный tooltip-компонент. Для непустых
+        # баров добавляем «клик → 24h» чтобы tooltip сам по себе
+        # подсказывал интерактивность.
+        if v > 0:
+            tip = (
+                f"{format_day_short(d)} · {format_tokens(v)} · "
+                f"{format_pct(v, total_tokens)}% · клик → 24h"
+            )
+        else:
+            tip = (
+                f"{format_day_short(d)} · 0 · 0%"
+            )
         day_bars.append(
             f'<div class="{bar_cls}" '
             f'data-day="{format_day_iso(d)}" '
@@ -1139,6 +1154,15 @@ def render_html(
       color: var(--muted);
       margin-bottom: 14px;
     }}
+    .detail-hint {{
+      /* Подсказка про кликабельность дневного ряда. Тонкий secondary
+         стиль, чтобы не конкурировать с основной метрикой слева. */
+      margin-left: 12px;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      opacity: 0.6;
+    }}
 
     /* === Day chart (дневной ряд) === */
     .day-chart {{
@@ -1530,8 +1554,13 @@ def render_html(
         return d + " " + months[m];
       }}
 
-      function parseJSONScript(cls) {{
-        var el = document.querySelector("." + cls);
+      function parseJSONScript(cls, root) {{
+        // root — Element scope. Если не задан, ищем по всему документу —
+        // это нужно для синглтон-скриптов вне detail-row. Для .day-hour-map
+        // передаём detailRow, иначе при >1 открытом шевроне всегда
+        // читался бы map первого проекта и rebuild24h показывал чужие
+        // данные.
+        var el = (root || document).querySelector("." + cls);
         if (!el) return null;
         try {{ return JSON.parse(el.textContent); }}
         catch (e) {{ return null; }}
@@ -1602,9 +1631,11 @@ def render_html(
       }}
 
       // Сборка нового 24h chart-shell для выбранного дня. Полная замена
-      // innerHTML у .hour-chart.
+      // innerHTML у .hour-chart. day-hour-map читаем scoped к detailRow —
+      // иначе при нескольких открытых шевронах клик по бару проекта N
+      // подменил бы chart на данные проекта 0.
       function rebuild24h(detailRow, targetDay) {{
-        var map = parseJSONScript("day-hour-map");
+        var map = parseJSONScript("day-hour-map", detailRow);
         if (!map) return;
         var hourMap = map[targetDay];
         if (!hourMap) return;
