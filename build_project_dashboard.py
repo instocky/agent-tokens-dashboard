@@ -1120,6 +1120,10 @@ def render_html(
     tbody td.project {{ padding-left: 14px; }}
 
     /* === Detail row (inline-зона) === */
+    /* NB: [hidden] даёт display:none из UA stylesheet, но `tr` имеет
+       `display: table-row` оттуда же — и table-row выигрывает по
+       специфичности, ряд остаётся видимым. Явное правило для скрытия. */
+    tbody tr.detail-row[hidden] {{ display: none; }}
     tbody tr.detail-row > td.detail-cell {{
       padding: 0;
       background: var(--panel-2);
