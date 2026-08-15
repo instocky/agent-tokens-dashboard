@@ -5,6 +5,13 @@
 проекту (slug из workspaceDir) и собирает self-contained
 `project-dashboard.html` (без backend, без внешнего JSON).
 
+Input/output split + cost: для каждого дня и каждого (day, hour) bucket
+храним и total (input+output), и пару (input, output) — параллельные
+структуры `_split`. Используется для split-стека на .day-bar/.bar-24h
+(inline linear-gradient) и для расчёта стоимости через
+`config.compute_cost(in, out, DEFAULT_MODEL)`. Этот же паттерн
+используется в build_dashboard.py::Week.days_split / HourlyBar.
+
 Окно: 4 последние завершённых ISO-недели (Пн–Вс) + текущая = 5 недель
 всего. Например, для today=2026-08-07 (W-32) окно = [2026-07-06,
 2026-08-10) MSK, т.е. W-28..W-32. Реальный SQL-фильтр обрезается по
@@ -41,6 +48,8 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from config import DEFAULT_MODEL, MODEL_PRICING, compute_cost, fmt_money
 
 # ---- constants -------------------------------------------------------------
 
@@ -104,17 +113,27 @@ class ProjectRow:
 class ProjectTimeSeries:
     """Per-project time series для inline-зоны под строкой таблицы.
 
-    `days`  — {msk_date: tokens} для всех дней в окне (включая пустые —
-              рендер показывает их как empty bar). Гарантированно покрывает
-              непрерывный диапазон [first_day .. last_day] без пропусков,
-              т.е. пустые дни между активностями тоже присутствуют с value=0.
-    `hours` — {(msk_date, msk_hour): tokens} для 24h stream выбранного дня.
+    `days`        — {msk_date: total_tokens} для всех дней в окне
+                    (включая пустые — рендер показывает их как empty bar).
+                    Гарантированно покрывает непрерывный диапазон
+                    [first_day .. last_day] без пропусков, т.е. пустые дни
+                    между активностями тоже присутствуют с value=0.
+    `days_split`  — {msk_date: (input_tokens, output_tokens)} для тех же
+                    дней. Параллельное поле `days` (intentionally не тип
+                    `days` поменяли, чтобы не ломать старые callers).
+                    input+output == days[date] (modulo integer truncation).
+    `hours`       — {(msk_date, msk_hour): total_tokens} для 24h stream
+                    выбранного дня.
+    `hours_split` — {(msk_date, msk_hour): (input_tokens, output_tokens)}
+                    для тех же часов. input+output == hours[(d, h)].
     `first_day` / `last_day` — MSK dates, ограничивают дневной ряд. None,
-              если в окне вообще нет token_usage (тогда dataclass не
-              создаётся, ProjectRow.time_series = None).
+                    если в окне вообще нет token_usage (тогда dataclass не
+                    создаётся, ProjectRow.time_series = None).
     """
     days: dict[date, int]
+    days_split: dict[date, tuple[int, int]]
     hours: dict[tuple[date, int], int]
+    hours_split: dict[tuple[date, int], tuple[int, int]]
     first_day: date
     last_day: date
 
@@ -378,40 +397,55 @@ def collect_time_series(
     # Один SQL: GROUP BY session_id, msk_date, msk_hour. Локальное
     # преобразование ms→MSK (+3 hours) делаем в SQLite — детерминированно,
     # не зависит от локали машины. Шаблон идентичен build_dashboard.py::
-    # aggregate_by_hour.
+    # aggregate_by_hour_split: input/output возвращаются раздельно, total
+    # деривируется в Python (sum in+out) — единая SQL-точка, чтобы при
+    # появлении новых колонок (cache/reasoning) править здесь.
     sql = """
         SELECT
             session_id,
             date(ts / 1000, 'unixepoch', '+3 hours')                          AS msk_date,
             CAST(strftime('%H', ts / 1000, 'unixepoch', '+3 hours') AS INT)  AS msk_hour,
-            COALESCE(SUM(input_tokens + output_tokens), 0)                    AS tokens
+            COALESCE(SUM(input_tokens), 0)                                    AS in_t,
+            COALESCE(SUM(output_tokens), 0)                                   AS out_t
         FROM local_runtime_token_usage
         WHERE ts >= ? AND ts < ?
         GROUP BY session_id, msk_date, msk_hour
     """
 
-    # Промежуточные буферы: per-project словари day→sum и (day,hour)→sum.
+    # Промежуточные буферы: per-project словари day→int и (day,hour)→int
+    # для total'ов; параллельно day→(in,out) и (day,hour)→(in,out) для
+    # split-стека. Парность соблюдаем инвариантом: total == in+out.
     days_buf: dict[str, dict[date, int]] = {}
+    days_split_buf: dict[str, dict[date, tuple[int, int]]] = {}
     hours_buf: dict[str, dict[tuple[date, int], int]] = {}
+    hours_split_buf: dict[str, dict[tuple[date, int], tuple[int, int]]] = {}
     first_day: dict[str, date] = {}
     last_day: dict[str, date] = {}
 
-    for sid, d_str, h, tokens in con.execute(sql, (start_ts_ms, end_ts_ms)):
+    for sid, d_str, h, in_t, out_t in con.execute(sql, (start_ts_ms, end_ts_ms)):
         sid_s = str(sid)
         project = sid_to_project.get(sid_s)
         if project is None:
             continue
         d = date.fromisoformat(str(d_str))
         hour = int(h)
-        t = int(tokens)
-        if t <= 0:
+        in_v = int(in_t)
+        out_v = int(out_t)
+        total = in_v + out_v
+        if total <= 0:
             continue
 
         d_b = days_buf.setdefault(project, {})
-        d_b[d] = d_b.get(d, 0) + t
+        d_b[d] = d_b.get(d, 0) + total
+        d_s = days_split_buf.setdefault(project, {})
+        prev_in, prev_out = d_s.get(d, (0, 0))
+        d_s[d] = (prev_in + in_v, prev_out + out_v)
 
         h_b = hours_buf.setdefault(project, {})
-        h_b[(d, hour)] = h_b.get((d, hour), 0) + t
+        h_b[(d, hour)] = h_b.get((d, hour), 0) + total
+        h_s = hours_split_buf.setdefault(project, {})
+        hprev_in, hprev_out = h_s.get((d, hour), (0, 0))
+        h_s[(d, hour)] = (hprev_in + in_v, hprev_out + out_v)
 
         if project not in first_day or d < first_day[project]:
             first_day[project] = d
@@ -419,20 +453,25 @@ def collect_time_series(
             last_day[project] = d
 
     # Дополняем дневной ряд пустыми днями в [first_day..last_day]. Это
-    # гарантирует непрерывную X-шкалу для чарта.
+    # гарантирует непрерывную X-шкалу для чарта. Для split — добавляем
+    # (0, 0) в дни, по которым SQL ничего не вернул (нет активности).
     result: dict[str, ProjectTimeSeries] = {}
     for project, d_b in days_buf.items():
         fd = first_day[project]
         ld = last_day[project]
-        # Сборка полного days dict
+        d_s = days_split_buf.get(project, {})
         full_days: dict[date, int] = {}
+        full_days_split: dict[date, tuple[int, int]] = {}
         d = fd
         while d <= ld:
             full_days[d] = d_b.get(d, 0)
+            full_days_split[d] = d_s.get(d, (0, 0))
             d += timedelta(days=1)
         result[project] = ProjectTimeSeries(
             days=full_days,
+            days_split=full_days_split,
             hours=hours_buf.get(project, {}),
+            hours_split=hours_split_buf.get(project, {}),
             first_day=fd,
             last_day=ld,
         )
@@ -655,26 +694,45 @@ def render_project_detail(
     peak_day = max(ts.days.items(), key=lambda kv: kv[1])[0] if max_value > 0 else days_sorted[0]
     peak_value = ts.days.get(peak_day, 0)
 
+    # Total cost за весь проект = compute_cost(SUM(input), SUM(output)).
+    # Суммируем split по всем дням, чтобы не было rounding-drift между
+    # total_tokens (sum int) и total_cost (sum in+out). Для 0-токенов —
+    # $0.00 (compute_cost корректно даёт 0.0 на нулях).
+    total_in = sum(s[0] for s in ts.days_split.values())
+    total_out = sum(s[1] for s in ts.days_split.values())
+    total_cost = compute_cost(total_in, total_out, DEFAULT_MODEL)
+
     # Initial выбранный день = самый свежий день с данными. Для 1-day проекта
     # это и есть единственный день.
     days_with_data = [d for d in days_sorted if ts.days.get(d, 0) > 0]
     selected_day = days_with_data[-1] if days_with_data else days_sorted[-1]
     is_one_day = len(days_sorted) == 1
 
-    # Заголовок. Hint «↓ клик по дню → 24h» — рядом с пиком, чтобы юзер
-    # не воспринимал дневной ряд как чисто декоративный (бары кликабельны,
-    # см. onDayBarClick). Не показываем для 1-day проекта — там один бар
-    # и так выбран, дополнительный hint шумит.
+    # Заголовок. Per-day view: "N дней · день DD MMM (T / $C)".
+    # Выбранный день = selected_day (см. ниже), и tokens/cost берутся
+    # для НЕГО, не для всего проекта. При клике по day-bar JS
+    # (rebuild24h) пересчитывает header через data-атрибуты. Peak-день
+    # убран из header (он виден в дневном ряду как .day-bar--peak) —
+    # на узких экранах header и так перегружен, +3 поля тяжело.
     n_days_label = "1 день" if is_one_day else f"{len(days_sorted)} дней"
-    peak_label = f"{format_day_short(peak_day)} ({format_tokens(peak_value)})"
     click_hint = (
         "" if is_one_day
         else '<span class="detail-hint">↓ клик по дню → 24h</span>'
     )
+    # Initial selected-day label.
+    sel_in, sel_out = ts.days_split.get(selected_day, (0, 0))
+    sel_cost = compute_cost(sel_in, sel_out, DEFAULT_MODEL)
+    sel_tokens = ts.days.get(selected_day, 0)
+    selected_label = (
+        f'день {html.escape(format_day_short(selected_day))}'
+        f' ({html.escape(format_tokens(sel_tokens))}'
+        f' / {html.escape(fmt_money(sel_cost))})'
+    )
     header = (
-        f'<div class="detail-header">'
-        f'{n_days_label} · всего {html.escape(format_tokens(total_tokens))}'
-        f' · пик {html.escape(peak_label)}'
+        f'<div class="detail-header" '
+        f'data-n-days="{len(days_sorted)}" '
+        f'data-selected-day="{format_day_iso(selected_day)}">'
+        f'{n_days_label} · {selected_label}'
         f'{click_hint}'
         f'</div>'
     )
@@ -685,6 +743,7 @@ def render_project_detail(
     day_labels: list[str] = []
     for d in days_sorted:
         v = ts.days.get(d, 0)
+        in_v, out_v = ts.days_split.get(d, (0, 0))
         h_pct = bar_height_pct(v, max_value, use_log)
         is_peak = (v > 0 and v == max_value)
         is_selected = (d == selected_day)
@@ -695,24 +754,29 @@ def render_project_detail(
             bar_cls += " day-bar--peak"
         if is_selected:
             bar_cls += " day-bar--selected"
-        # Tooltip: "DD MMM · X.XM · NN%". Используем стандартный title=
-        # чтобы не плодить кастомный tooltip-компонент. Для непустых
-        # баров добавляем «клик → 24h» чтобы tooltip сам по себе
-        # подсказывал интерактивность.
+        # Tooltip split-разбивка: "DD MMM · ↑I · ↓O (Σ T) · NN% · клик → 24h".
+        # Используется тот же контракт стрелок, что в build_dashboard.py
+        # (↑ = input, ↓ = output). Empty bar: short tip без стрелок.
         if v > 0:
+            in_pct = (in_v / v * 100.0) if v > 0 else 0.0
+            style_extra = (
+                f";background:linear-gradient(to top,"
+                f"var(--bar-in) 0% {in_pct:.1f}%,"
+                f"var(--bar-out) {in_pct:.1f}% 100%)"
+            )
             tip = (
-                f"{format_day_short(d)} · {format_tokens(v)} · "
-                f"{format_pct(v, total_tokens)}% · клик → 24h"
+                f"{format_day_short(d)} · "
+                f"↑{in_v:,} · ↓{out_v:,} "
+                f"(Σ {v:,}) · {format_pct(v, total_tokens)}% · клик → 24h"
             )
         else:
-            tip = (
-                f"{format_day_short(d)} · 0 · 0%"
-            )
+            style_extra = ""
+            tip = f"{format_day_short(d)} · 0 · 0%"
         day_bars.append(
             f'<div class="{bar_cls}" '
             f'data-day="{format_day_iso(d)}" '
             f'data-tokens="{v}" '
-            f'style="height: {h_pct:.1f}%" '
+            f'style="height: {h_pct:.1f}%;{style_extra.lstrip(";")}" '
             f'title="{html.escape(tip)}" '
             f'role="button" tabindex="0" aria-label="{html.escape(tip)}">'
             f'</div>'
@@ -736,10 +800,16 @@ def render_project_detail(
         f'</div>'
     )
 
-    # Separator + initial 24h для выбранного дня
+    # Separator + initial 24h для выбранного дня. Формат:
+    # "22 июл · 25.77M / $X.XX" — tokens + cost выбранного дня, по
+    # аналогии с project-header "всего X / $Y". Cost для пустого дня
+    # (value=0) → $0.00 (compute_cost корректно даёт 0.0).
+    selected_in, selected_out = ts.days_split.get(selected_day, (0, 0))
+    selected_cost = compute_cost(selected_in, selected_out, DEFAULT_MODEL)
     sep_text = (
         f'{format_day_short(selected_day)} · '
         f'{html.escape(format_tokens(ts.days.get(selected_day, 0)))}'
+        f' / {html.escape(fmt_money(selected_cost))}'
     )
     day_separator = (
         f'<div class="day-separator" data-selected-day="{format_day_iso(selected_day)}">'
@@ -753,13 +823,21 @@ def render_project_detail(
         f'</div>'
     )
 
-    # day-hour-map: {day_iso: {hour: tokens, ...}} для всех дней проекта.
-    # Используется JS'ом при клике на day-bar — пересобирает .hour-chart.
-    day_hour_map: dict[str, dict[str, int]] = {}
+    # day-hour-map: {day_iso: {hour: {"total", "in", "out"}}} для всех
+    # дней проекта. Используется JS'ом при клике на day-bar — пересобирает
+    # .hour-chart с split-градиентом. Schema сменилась с {{hour: int}} на
+    # {{hour: {total, in, out}}} чтобы JS мог рендерить inline gradient
+    # без дополнительных lookup'ов в отдельный split-map.
+    day_hour_map: dict[str, dict[str, dict[str, int]]] = {}
     for d in days_sorted:
-        per_hour: dict[str, int] = {}
+        per_hour: dict[str, dict[str, int]] = {}
         for h in range(24):
-            per_hour[str(h)] = int(ts.hours.get((d, h), 0))
+            in_v, out_v = ts.hours_split.get((d, h), (0, 0))
+            per_hour[str(h)] = {
+                "total": int(ts.hours.get((d, h), 0)),
+                "in": int(in_v),
+                "out": int(out_v),
+            }
         day_hour_map[format_day_iso(d)] = per_hour
 
     day_meta = {
@@ -813,10 +891,15 @@ def render_24h_for_day(
     today_msk_date = now_msk.date()
     is_today = (target_day == today_msk_date)
 
-    # Достаём 24 значений
+    # Достаём 24 значений (total + split).
     values: list[int] = []
+    in_values: list[int] = []
+    out_values: list[int] = []
     for h in range(24):
+        in_v, out_v = ts.hours_split.get((target_day, h), (0, 0))
         values.append(int(ts.hours.get((target_day, h), 0)))
+        in_values.append(int(in_v))
+        out_values.append(int(out_v))
 
     # peak: top-1 value > 0
     peak_value = max(values) if values else 0
@@ -846,6 +929,8 @@ def render_24h_for_day(
     cells: list[str] = []
     for h in range(24):
         v = values[h]
+        in_v = in_values[h]
+        out_v = out_values[h]
         # state
         if is_today:
             if h < now_msk.hour:
@@ -866,12 +951,33 @@ def render_24h_for_day(
         cls = f"bar-24h {state}"
         h_pct = pct(v)
 
-        title = f"{h:02d}:00–{h:02d}:59: {format_tokens(v) if v else 'нет данных'}"
+        # Split-стек через inline linear-gradient: input (внизу) → output
+        # (сверху). Контракт стрелок в tooltip: ↑ = input, ↓ = output
+        # (тот же, что в build_dashboard.py). Empty/future — без gradient
+        # (CSS рисует neutral bg / dashed border), tooltip "нет данных".
+        if v > 0:
+            in_pct = (in_v / v * 100.0) if v > 0 else 0.0
+            style_extra = (
+                f";background:linear-gradient(to top,"
+                f"var(--bar-in) 0% {in_pct:.1f}%,"
+                f"var(--bar-out) {in_pct:.1f}% 100%)"
+            )
+            title = (
+                f"{h:02d}:00–{h:02d}:59: "
+                f"↑{in_v:,} · ↓{out_v:,} (Σ {v:,})"
+            )
+        else:
+            style_extra = ""
+            title = f"{h:02d}:00–{h:02d}:59: нет данных"
+        bar_style = f"height:{h_pct:.1f}%;{style_extra.lstrip(';')}"
+
         label_cls = "hour-label"
         if state == "future":
             label_cls += " hour-label--future"
 
-        # peak-value label — только если state == peak
+        # peak-value label — только если state == peak. Cost не показываем
+        # на уровне часа (юзер явно попросил cost только для всего проекта;
+        # пиковый час без cost — OK, консистентно с peak-денём).
         peak_value_html = (
             f'<span class="peak-value">{format_tokens(v)}</span>'
             if state == "peak" else ""
@@ -880,7 +986,7 @@ def render_24h_for_day(
         cells.append(
             f'<div class="hour-cell" data-hour="{h}">'
             f'{peak_value_html}'
-            f'<div class="{cls}" style="height:{h_pct:.1f}%" title="{html.escape(title)}"></div>'
+            f'<div class="{cls}" style="{bar_style}" title="{html.escape(title)}"></div>'
             f'<span class="{label_cls}">{h:02d}</span>'
             f"</div>"
         )
@@ -1185,7 +1291,14 @@ def render_html(
       align-items: end;
     }}
     .day-bar {{
-      background: var(--accent-2);
+      /* Split-стек: input (внизу, --bar-in) → output (сверху, --bar-out).
+         Inline linear-gradient ставится в Python render через style="…".
+         Один тон на оба чарта (day + 24h) по согласованию с TL: --bar-out
+         = #10b981 (accent-2) для визуальной связности project-dashboard.
+         --bar-in = #4a5070 (тёмно-синий, тот же, что в build_dashboard.py
+         для общего дашборда — единая палитра input/output). */
+      --bar-in: #4a5070;
+      --bar-out: #10b981;
       border-radius: 6px 6px 2px 2px;
       min-height: 2px;
       cursor: pointer;
@@ -1283,7 +1396,12 @@ def render_html(
     .bar-24h.active,
     .bar-24h.peak,
     .bar-24h.current {{
-      background: #216e39;
+      /* Split-стек через inline linear-gradient (см. _render_24h_stream
+         в build_dashboard.py). Один тон output на оба чарта (day + 24h) —
+         тот же #10b981, что в .day-bar. CSS-vars на классе — родительский
+         var() резолвится на самом элементе для inline style. */
+      --bar-in: #4a5070;
+      --bar-out: #10b981;
     }}
     .bar-24h.peak {{
       box-shadow: none;
@@ -1506,6 +1624,12 @@ def render_html(
     // (формат ISO date + hour MSK).
     window.__NOW_MSK_ISO__ = "{now_msk_iso}";
     window.__NOW_MSK_HOUR__ = {now_msk_hour};
+    // Цены модели из config.py (MODEL_PRICING[DEFAULT_MODEL]). Прокидываем
+    // в JS, чтобы rebuild24h мог пересчитать cost выбранного дня без второго
+    // pass через Python. Если сменится модель, значение подхватится из
+    // config автоматически.
+    window.__PRICE_IN__ = {MODEL_PRICING[DEFAULT_MODEL]["input"]};
+    window.__PRICE_OUT__ = {MODEL_PRICING[DEFAULT_MODEL]["output"]};
   </script>
 
   <script>
@@ -1529,6 +1653,13 @@ def render_html(
       var NOW_MSK_ISO = window.__NOW_MSK_ISO__ || "";
       var NOW_MSK_HOUR = (typeof window.__NOW_MSK_HOUR__ === "number")
         ? window.__NOW_MSK_HOUR__ : -1;
+      // Цены модели из config.py, прокинуты Python-билдером.
+      // rebuild24h использует их для пересчёта cost выбранного дня
+      // (формат "tokens / $cost" в .day-separator).
+      var PRICE_IN = (typeof window.__PRICE_IN__ === "number")
+        ? window.__PRICE_IN__ : 0.23;
+      var PRICE_OUT = (typeof window.__PRICE_OUT__ === "number")
+        ? window.__PRICE_OUT__ : 0.96;
 
       function fmtTokens(n) {{
         // Копия Python format_tokens: K=1dp, M=2dp, B=2dp, strip trailing
@@ -1574,14 +1705,33 @@ def render_html(
         catch (e) {{ return null; }}
       }}
 
+      // Копия Python fmt_money: "$X,XXX.XX" (всегда 2 знака).
+      // Определена на top-level IIFE (вместе с fmtTokens), чтобы была
+      // видна из rebuild24h. Раньше жила внутри build24hCells (closure),
+      // и rebuild24h падал с "fmtMoney is not defined" при первом
+      // же вызове после клика по day-bar.
+      function fmtMoney(amount) {{
+        return "$" + amount.toFixed(2).replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, ",");
+      }}
+
       // Сборка 24h cells для конкретного дня. Та же логика, что в
       // Python render_24h_for_day. Возвращает HTML string 24 ячеек.
+      //
+      // hourMap schema: {{ "<hour>": {{total, in, out}}, ... }} — split-форма,
+      // чтобы рендерить inline gradient без отдельного split-map lookup.
+      // При отсутствии ключа — дефолт {{total:0, in:0, out:0}} (дни
+      // без активности).
       function build24hCells(hourMap, targetDay) {{
         var isToday = (targetDay === NOW_MSK_ISO);
         var nowHour = isToday ? NOW_MSK_HOUR : -1;
         var values = [];
+        var inValues = [];
+        var outValues = [];
         for (var h = 0; h < 24; h++) {{
-          values.push(hourMap[String(h)] || 0);
+          var cell = hourMap[String(h)] || {{ total: 0, in: 0, out: 0 }};
+          values.push(cell.total || 0);
+          inValues.push(cell.in || 0);
+          outValues.push(cell.out || 0);
         }}
         // peak: top-1 (>0), наименьший hour
         var peakHour = -1;
@@ -1603,9 +1753,18 @@ def render_html(
           return Math.max(2.0, Math.min(100.0, (v / pastMax) * 100));
         }}
 
+        function fmtInt(n) {{
+          // "1234567" → "1,234,567". Используем в tooltip'ах, чтобы
+          // большие числа не теряли точность.
+          var s = String(n);
+          return s.replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, ",");
+        }}
+
         var out = [];
         for (var h3 = 0; h3 < 24; h3++) {{
           var v = values[h3];
+          var inV = inValues[h3];
+          var outV = outValues[h3];
           var state;
           if (isToday) {{
             if (h3 < nowHour) state = "active";
@@ -1619,9 +1778,27 @@ def render_html(
 
           var cls = "bar-24h " + state;
           var hPct = pct(v);
-          var title = (h3 < 10 ? "0" : "") + h3 + ":00–" +
-                      (h3 < 10 ? "0" : "") + h3 + ":59: " +
-                      (v ? fmtTokens(v) : "нет данных");
+          var hhPad = (h3 < 10 ? "0" : "") + h3;
+          var styleStr;
+          var title;
+          if (v > 0) {{
+            // Split-стек через inline linear-gradient (тот же паттерн,
+            // что в Python render_24h_for_day). Без inner div'ов → без
+            // seams на границе слоёв.
+            var inPct = (inV / v) * 100.0;
+            styleStr =
+              "height:" + hPct.toFixed(1) + "%;" +
+              "background:linear-gradient(to top," +
+              "var(--bar-in) 0% " + inPct.toFixed(1) + "%," +
+              "var(--bar-out) " + inPct.toFixed(1) + "% 100%)";
+            title =
+              hhPad + ":00–" + hhPad + ":59: " +
+              "↑" + fmtInt(inV) + " · ↓" + fmtInt(outV) +
+              " (Σ " + fmtInt(v) + ")";
+          }} else {{
+            styleStr = "height:" + hPct.toFixed(1) + "%";
+            title = hhPad + ":00–" + hhPad + ":59: нет данных";
+          }}
           var labelCls = "hour-label" + (state === "future" ? " hour-label--future" : "");
           var peakLabel = state === "peak"
             ? '<span class="peak-value">' + fmtTokens(v) + '</span>'
@@ -1629,9 +1806,9 @@ def render_html(
           out.push(
             '<div class="hour-cell" data-hour="' + h3 + '">' +
             peakLabel +
-            '<div class="' + cls + '" style="height:' + hPct.toFixed(1) + '%" title="' +
+            '<div class="' + cls + '" style="' + styleStr + '" title="' +
             title.replace(/"/g, "&quot;") + '"></div>' +
-            '<span class="' + labelCls + '">' + (h3 < 10 ? "0" : "") + h3 + '</span>' +
+            '<span class="' + labelCls + '">' + hhPad + '</span>' +
             '</div>'
           );
         }}
@@ -1655,13 +1832,46 @@ def render_html(
           '<div class="hours-24h">' + cells + '</div>' +
           '</div>';
 
-        // Обновляем separator
+        // Считаем total и split за выбранный день (в одном проходе).
+        // Используется и для separator, и для header (оба per-day).
+        var tokens = 0;
+        var sumIn = 0;
+        var sumOut = 0;
+        for (var h = 0; h < 24; h++) {{
+          var c = hourMap[String(h)];
+          if (c) {{
+            tokens += (c.total || 0);
+            sumIn += (c.in || 0);
+            sumOut += (c.out || 0);
+          }}
+        }}
+        var cost = (sumIn / 1e6) * PRICE_IN + (sumOut / 1e6) * PRICE_OUT;
+
+        // Обновляем separator. Формат: "DD MMM · tokens / $cost".
         var sep = detailRow.querySelector(".day-separator");
         if (sep) {{
-          var tokens = 0;
-          for (var h = 0; h < 24; h++) tokens += (hourMap[String(h)] || 0);
-          sep.textContent = fmtDayShort(targetDay) + " · " + fmtTokens(tokens);
+          sep.textContent = fmtDayShort(targetDay) + " · " +
+            fmtTokens(tokens) + " / " + fmtMoney(cost);
           sep.setAttribute("data-selected-day", targetDay);
+        }}
+
+        // Обновляем header. Per-day view: "N дней · день X (T / $C)".
+        // data-n-days — статика (size of window); "день X (T / $C)" —
+        // dynamic, обновляется при каждом клике. Click-hint (если был)
+        // оставляем на месте — он тоже статика для multi-day проектов.
+        var header = detailRow.querySelector(".detail-header");
+        if (header) {{
+          var nDays = header.getAttribute("data-n-days") || "";
+          var nLabel;
+          if (nDays === "1") nLabel = "1 день";
+          else nLabel = nDays + " дней";
+          // Берём hint из текущего header (если есть) — он multi-day
+          // static, оставляем как есть.
+          var hintNode = header.querySelector(".detail-hint");
+          var hintHtml = hintNode ? hintNode.outerHTML : "";
+          header.innerHTML = nLabel + " · день " + fmtDayShort(targetDay) +
+            " (" + fmtTokens(tokens) + " / " + fmtMoney(cost) + ")" + hintHtml;
+          header.setAttribute("data-selected-day", targetDay);
         }}
 
         // Переключаем selected на барах

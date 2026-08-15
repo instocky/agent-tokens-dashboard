@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from build_project_dashboard import (  # noqa: E402
     MSK,
     ProjectRow,
+    ProjectTimeSeries,
     WeekSpan,
     collect_projects,
     compute_window,
@@ -832,6 +833,383 @@ def test_render_html_embeds_sort_script_and_storage_key() -> None:
     assert "cursor: pointer" in html_doc
 
 
+# ---- input/output split + cost в detail-row (commit WIP) ------------------
+
+def _make_alpha_ts() -> ProjectTimeSeries:
+    """Фиктивный ProjectTimeSeries для проверки рендера.
+
+    Три дня активности (07, 08, 09 авг) с известным split:
+      - 07 авг: 200 in, 100 out (300 total), 1 час (10:00)
+      - 08 авг: 400 in, 200 out (600 total), 1 час (10:00)
+      - 09 авг: 100 in, 50 out (150 total), 1 час (10:00)
+    Промежуточные пустые дни НЕ добавляем — для тестов достаточно
+    непрерывной 3-дневной серии. selected_day=09 (последний с данными).
+    """
+    from datetime import date
+    d07, d08, d09 = date(2026, 8, 7), date(2026, 8, 8), date(2026, 8, 9)
+    return ProjectTimeSeries(
+        days={d07: 300, d08: 600, d09: 150},
+        days_split={d07: (200, 100), d08: (400, 200), d09: (100, 50)},
+        hours={
+            (d07, 10): 300,
+            (d08, 10): 600,
+            (d09, 10): 150,
+        },
+        hours_split={
+            (d07, 10): (200, 100),
+            (d08, 10): (400, 200),
+            (d09, 10): (100, 50),
+        },
+        first_day=d07,
+        last_day=d09,
+    )
+
+
+def _make_rows_with_ts(ts: ProjectTimeSeries) -> list[ProjectRow]:
+    """Один ProjectRow с прикреплённым time_series (totals из ts.days)."""
+    total_tokens = sum(ts.days.values())
+    # max_ms берётся как фиксированная величина — для теста рендера неважно.
+    return [ProjectRow(
+        project="alpha",
+        last_update=date(2026, 8, 9),
+        max_ms=1_700_000_000_000,
+        duration_ms=3_600_000,
+        tokens=total_tokens,
+        sessions=3,
+        is_active=False,
+        time_series=ts,
+    )]
+
+
+def test_render_html_detail_header_has_per_day_cost() -> None:
+    """Header «N дней · день DD MMM (T / $C)» — per-day view.
+
+    Раньше header был project-level («всего X / $Y · пик D»), но при
+    клике по day-bar 24h менялся, а header оставался статичным. Юзер
+    попросил, чтобы header отражал выбранный день. Initial selected_day
+    = 2026-08-09 (последний с данными из _make_alpha_ts).
+    in=100, out=50, total=150 → cost = (100/1e6)*0.23 + (50/1e6)*0.96
+    = 0.000023 + 0.000048 = $0.00 (round to 2 знака).
+    format_tokens(150) = "150" (без K/M суффикса).
+    Контракт: "день 9 авг (150 / $0.00)" в header.
+    """
+    from datetime import date
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Ищем HTML-часть (после </style>), иначе regex ловит CSS-комментарии.
+    style_end = html_doc.find("</style>")
+    html_part = html_doc[style_end:]
+    m = re.search(r'<div class="detail-header"[^>]*>([^<]+)<', html_part)
+    assert m is not None, "no .detail-header in HTML"
+    header_text = m.group(1)
+    # "3 дней · день 9 авг (150 / $0.00)" — 3 дня = 7, 8, 9 авг.
+    assert "день 9 авг" in header_text, (
+        f"expected 'день 9 авг' in header, got: {header_text!r}"
+    )
+    assert "150" in header_text, f"expected '150' tokens, got: {header_text!r}"
+    assert "$0.00" in header_text, f"expected '$0.00' cost, got: {header_text!r}"
+
+
+def test_render_html_detail_header_has_data_attrs() -> None:
+    """Header имеет data-n-days и data-selected-day для JS-пересчёта.
+
+    rebuild24h читает data-n-days для рендера "N дней" в новом
+    заголовке и data-selected-day для синхронизации состояния. Без
+    этих атрибутов click по day-bar не обновит header (молча оставит
+    статичный "всего X / $Y").
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+    style_end = html_doc.find("</style>")
+    html_part = html_doc[style_end:]
+    m = re.search(
+        r'<div class="detail-header"\s+'
+        r'data-n-days="(\d+)"\s+'
+        r'data-selected-day="(\d{4}-\d{2}-\d{2})"',
+        html_part,
+    )
+    assert m is not None, "no data-n-days/data-selected-day on .detail-header"
+    assert m.group(1) == "3", f"expected n_days=3, got {m.group(1)}"
+    assert m.group(2) == "2026-08-09", (
+        f"expected selected_day=2026-08-09, got {m.group(2)}"
+    )
+
+
+def test_render_html_rebuild24h_updates_header() -> None:
+    """JS rebuild24h обновляет .detail-header при клике по day-bar.
+
+    Smoke-тест: проверяем, что inline <script> содержит код, который
+    находит .detail-header и переписывает его innerHTML. Полный
+    node-тест (mock DOM + вызов rebuild24h) тут overkill — script
+    всё равно загружается в browser, и если код упадёт, click по
+    day-bar сломается. Этот тест ловит "забыли обновить header при
+    клике" регрессию.
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # 1. rebuild24h должен вызывать detailRow.querySelector(".detail-header").
+    assert 'querySelector(".detail-header")' in html_doc, (
+        "rebuild24h не запрашивает .detail-header — header не обновится"
+    )
+    # 2. Записывает в header.innerHTML (не textContent) — нужно вставить
+    # hint span рядом с per-day label.
+    assert "header.innerHTML" in html_doc, (
+        "rebuild24h не пишет в header.innerHTML — hint span не сохранится"
+    )
+    # 3. Использует data-n-days для статической части.
+    assert 'getAttribute("data-n-days")' in html_doc, (
+        "rebuild24h не читает data-n-days — не сможет отрендерить 'N дней'"
+    )
+    # 4. Формат per-day в JS: "день " + dayShort + " (...)" + cost.
+    assert "день " in html_doc, (
+        "rebuild24h не использует 'день ' префикс — формат сломан"
+    )
+    # 5. hint span сохраняется (multi-day проекты).
+    assert 'querySelector(".detail-hint")' in html_doc, (
+        "rebuild24h не сохраняет .detail-hint — multi-day теряет hint"
+    )
+
+
+def test_render_html_day_bar_has_inline_gradient() -> None:
+    """Day-bar получает inline linear-gradient с --bar-in/--bar-out CSS-vars."""
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Ищем .day-bar с inline gradient в style.
+    m = re.search(
+        r'<div class="day-bar[^"]*"[^>]*style="([^"]+)"',
+        html_doc,
+    )
+    assert m is not None, "no .day-bar with style found"
+    style = m.group(1)
+    # CSS-vars в style.
+    assert "var(--bar-in)" in style, f"expected var(--bar-in) in {style!r}"
+    assert "var(--bar-out)" in style, f"expected var(--bar-out) in {style!r}"
+    # linear-gradient(to top, …).
+    assert "linear-gradient(to top," in style
+    # Height (как и раньше).
+    assert "height:" in style
+
+
+def test_render_html_day_bar_tooltip_has_split_arrows() -> None:
+    """Tooltip day-bar: «DD MMM · ↑I · ↓O (Σ T) · NN% · клик → 24h»."""
+    from datetime import date
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Day 2026-08-07: in=200, out=100, total=300. Tooltip:
+    # "7 авг · ↑200 · ↓100 (Σ 300) · 28% · клик → 24h"
+    # 28% потому что 300/1050 = 28.57% → round 29% (format_pct uses int(round)).
+    # 300/1050*100 = 28.57 → 29.
+    expected_tooltip_07 = "7 авг · ↑200 · ↓100 (Σ 300) · 29% · клик → 24h"
+    assert expected_tooltip_07 in html_doc, (
+        f"expected tooltip '{expected_tooltip_07}' in HTML; "
+        f"search in: {html_doc[html_doc.find('7 авг'):html_doc.find('7 авг')+300]}"
+    )
+    # Day 2026-08-09: in=100, out=50, total=150. Pct: 150/1050 = 14.28% → 14.
+    expected_tooltip_09 = "9 авг · ↑100 · ↓50 (Σ 150) · 14% · клик → 24h"
+    assert expected_tooltip_09 in html_doc, (
+        f"expected tooltip '{expected_tooltip_09}' in HTML"
+    )
+
+
+def test_render_html_bar_24h_has_inline_gradient() -> None:
+    """24h bar получает inline linear-gradient (для непустых часов).
+
+    Ищем именно непустой бар (linear-gradient присутствует только при
+    v > 0; empty/future бары идут без gradient).
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)  # 09 авг — selected day
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # Ищем bar-24h в HTML-части (после </style>).
+    style_end = html_doc.find("</style>")
+    html_part = html_doc[style_end:]
+    # Требуем linear-gradient в style — он есть только у непустых баров.
+    m = re.search(
+        r'<div class="bar-24h[^"]*"[^>]*style="[^"]*linear-gradient[^"]*'
+        r'var\(--bar-in\)[^"]*var\(--bar-out\)[^"]+"',
+        html_part,
+    )
+    assert m is not None, (
+        "no .bar-24h with inline linear-gradient(--bar-in/--bar-out) found"
+    )
+
+
+def test_render_html_bar_24h_tooltip_has_split_arrows() -> None:
+    """Tooltip 24h bar: «HH:00–HH:59: ↑I · ↓O (Σ T)»."""
+    from datetime import date
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    # selected day = 09 авг (последний с данными). Hour 10: in=100, out=50, total=150.
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    expected = "10:00–10:59: ↑100 · ↓50 (Σ 150)"
+    assert expected in html_doc, (
+        f"expected tooltip '{expected}' in HTML; "
+        f"search: {html_doc[html_doc.find('10:00'):html_doc.find('10:00')+200]}"
+    )
+
+
+def test_render_html_day_hour_map_has_split_schema() -> None:
+    """day-hour-map JSON schema: {day: {hour: {total, in, out}}}.
+
+    Используется JS'ом при rebuild24h — split-объекты вместо int, чтобы
+    градиент рендерился без отдельного split-map.
+    """
+    from datetime import date
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    m = re.search(
+        r'<script type="application/json" class="day-hour-map">'
+        r'(.*?)</script>',
+        html_doc,
+        re.S,
+    )
+    assert m is not None, "day-hour-map <script> not found"
+    payload = json.loads(m.group(1))
+    # Структура: {"2026-08-07": {"10": {"total": 300, "in": 200, "out": 100}, ...}}.
+    assert "2026-08-07" in payload
+    cell = payload["2026-08-07"]["10"]
+    assert cell == {"total": 300, "in": 200, "out": 100}, (
+        f"unexpected cell shape: {cell}"
+    )
+    cell2 = payload["2026-08-09"]["10"]
+    assert cell2 == {"total": 150, "in": 100, "out": 50}
+
+
+def test_render_html_css_has_bar_in_bar_out_vars() -> None:
+    """CSS объявляет --bar-in/--bar-out на .day-bar и .bar-24h (active/peak/current).
+
+    Без объявления var() в inline style не резолвится → градиент не
+    отрисуется, бар будет просто цвета background'а. Тест ловит регрессию
+    "забыли объявить CSS-vars".
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+
+    # .day-bar должен объявлять vars.
+    m_day = re.search(r"\.day-bar\s*\{[^}]*--bar-in:\s*[^;]+;[^}]*--bar-out:\s*[^;]+;",
+                       html_doc, re.S)
+    assert m_day is not None, (
+        "no .day-bar with --bar-in/--bar-out declaration"
+    )
+    # .bar-24h.active/.peak/.current должны объявлять vars (один селектор
+    # на троих, vars под active).
+    m_24h = re.search(
+        r"\.bar-24h\.active,\s*\.bar-24h\.peak,\s*\.bar-24h\.current\s*\{[^}]*--bar-in:\s*[^;]+;[^}]*--bar-out:\s*[^;]+;",
+        html_doc, re.S,
+    )
+    assert m_24h is not None, (
+        "no .bar-24h.{active,peak,current} with --bar-in/--bar-out declaration"
+    )
+
+
+def test_render_html_day_separator_has_cost() -> None:
+    """day-separator (выбранный день) показывает tokens / $cost.
+
+    Initial selected_day = 2026-08-09 (последний с данными из _make_alpha_ts).
+    in=100, out=50, total=150 → cost = (100/1e6)*0.23 + (50/1e6)*0.96
+    = 0.000023 + 0.000048 = $0.00 (round to 2 знака).
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+    # Ищем HTML-часть (после </style>) — иначе regex ловит CSS-комментарии.
+    style_end = html_doc.find("</style>")
+    html_part = html_doc[style_end:]
+    m = re.search(
+        r'<div class="day-separator"[^>]*>([^<]+)</div>',
+        html_part,
+    )
+    assert m is not None, "no day-separator in HTML"
+    sep_text = m.group(1)
+    # Должно быть "9 авг · 150 / $0.00" (format_tokens(150) = "150" — нет K/M
+    # суффикса на 150, не падает ни в какую шкалу). Стоимость = $0.00.
+    assert "$0.00" in sep_text, (
+        f"expected '$0.00' in day-separator, got: {sep_text!r}"
+    )
+    # Токены выбранного дня тоже присутствуют.
+    assert "150" in sep_text, f"expected '150' tokens, got: {sep_text!r}"
+
+
+def test_render_html_day_separator_cost_for_sub_cent() -> None:
+    """Для достаточно крупных токенов cost = non-zero $X.XX.
+
+    Selected day = 2026-08-09, in=100, out=50, total=150 → $0.00.
+    День побольше: 2026-08-08, in=400, out=200, total=600 → $0.00.
+    День ещё больше: 2026-08-07, in=200, out=100, total=300 → $0.00.
+    Все три дают $0.00. Проверяем, что **формат** "tokens / $cost" присутствует
+    в markup (даже если cost = $0.00).
+    """
+    from config import compute_cost
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+    # Все три дня в _make_alpha_ts дают sub-cent cost.
+    for d, (in_v, out_v) in [
+        (date(2026, 8, 7), (200, 100)),
+        (date(2026, 8, 8), (400, 200)),
+        (date(2026, 8, 9), (100, 50)),
+    ]:
+        cost = compute_cost(in_v, out_v)
+        assert cost < 0.01, f"sanity: cost должен быть sub-cent для {d}"
+
+
+def test_render_html_model_pricing_propagated_to_js() -> None:
+    """window.__PRICE_IN__ / __PRICE_OUT__ прокинуты из config для JS rebuild.
+
+    rebuild24h использует их для пересчёта cost при клике на день. Без
+    прокидывания — JS считает $0.00 (или default 0.23/0.96 если они
+    hardcoded). Тест ловит регрессию "забыли прокинуть".
+    """
+    ts = _make_alpha_ts()
+    rows = _make_rows_with_ts(ts)
+    now = datetime(2026, 8, 9, 22, 0, tzinfo=MSK)
+    _, _, weeks = compute_window(now.date())
+    html_doc = render_html(rows, now, weeks)
+    # __PRICE_IN__ = 0.23 (input), __PRICE_OUT__ = 0.96 (output) для MiniMax-M3.
+    assert 'window.__PRICE_IN__ = 0.23' in html_doc, (
+        "window.__PRICE_IN__ not propagated to JS"
+    )
+    assert 'window.__PRICE_OUT__ = 0.96' in html_doc, (
+        "window.__PRICE_OUT__ not propagated to JS"
+    )
+
+
 # ---- main ------------------------------------------------------------------
 
 def main() -> int:
@@ -859,6 +1237,18 @@ def main() -> int:
         test_render_html_rate_short_duration_is_dash,
         test_render_html_sort_by_last_update_iso_asc_desc,
         test_render_html_embeds_sort_script_and_storage_key,
+        test_render_html_detail_header_has_per_day_cost,
+        test_render_html_detail_header_has_data_attrs,
+        test_render_html_rebuild24h_updates_header,
+        test_render_html_day_bar_has_inline_gradient,
+        test_render_html_day_bar_tooltip_has_split_arrows,
+        test_render_html_bar_24h_has_inline_gradient,
+        test_render_html_bar_24h_tooltip_has_split_arrows,
+        test_render_html_day_hour_map_has_split_schema,
+        test_render_html_css_has_bar_in_bar_out_vars,
+        test_render_html_day_separator_has_cost,
+        test_render_html_day_separator_cost_for_sub_cent,
+        test_render_html_model_pricing_propagated_to_js,
     ]
     passed = 0
     for t in tests:

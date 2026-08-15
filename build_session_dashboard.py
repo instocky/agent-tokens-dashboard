@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from config import DEFAULT_MODEL, compute_cost, fmt_money
+
 # ---- constants -------------------------------------------------------------
 
 # Абсолютные пути по умолчанию — рядом со скриптом. Переопределяются --db/--out.
@@ -83,6 +85,11 @@ class SessionRow:
     Все даты — MSK. `max_ms` нужен для сортировки "свежие сверху"; это
     MAX(created_at_ms) в окне, а не end_msk (end_msk — это date, без
     внутридневной точности, при равных date сломает порядок).
+
+    `input_tokens` / `output_tokens` — split-агрегаты за сессию. Параллельны
+    `tokens` (= in+out): cost считается через `compute_cost(in, out, ...)`,
+    и split нужен на бэке, чтобы не делать second SQL или second pass.
+    Тест-инвариант: `input_tokens + output_tokens == tokens`.
     """
     session_id: str
     title: str | None
@@ -93,6 +100,8 @@ class SessionRow:
     max_ms: int
     duration_ms: int
     tokens: int
+    input_tokens: int
+    output_tokens: int
     requests: int
     is_active: bool
 
@@ -233,17 +242,22 @@ def collect_sessions(
     if not msg_rows:
         return []
 
-    # 2. Tokens в окне — отдельный GROUP BY (быстрее, чем JOIN с messages).
+    # 2. Tokens в окне — split-агрегаты input/output отдельно (а не суммой).
+    #    Тот же паттерн, что в build_dashboard.py::aggregate_by_hour_split и
+    #    build_project_dashboard.py::collect_time_series: одна SQL-точка
+    #    истины для (input, output), total деривируется в Python. Cost
+    #    считается через compute_cost(in, out, DEFAULT_MODEL).
     tok_sql = """
         SELECT session_id,
-               COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
+               COALESCE(SUM(input_tokens), 0)  AS in_t,
+               COALESCE(SUM(output_tokens), 0) AS out_t
         FROM local_runtime_token_usage
         WHERE ts >= ? AND ts < ?
         GROUP BY session_id
     """
-    tok_rows: dict[str, int] = {}
-    for sid, t in con.execute(tok_sql, (start_ts_ms, end_ts_ms)):
-        tok_rows[str(sid)] = int(t)
+    tok_rows: dict[str, tuple[int, int]] = {}
+    for sid, in_t, out_t in con.execute(tok_sql, (start_ts_ms, end_ts_ms)):
+        tok_rows[str(sid)] = (int(in_t), int(out_t))
 
     # 3. Sessions metadata — title, workspaceDir, status. IN(...) с плейсхолдерами.
     sids = list(msg_rows.keys())
@@ -273,6 +287,10 @@ def collect_sessions(
         end_dt = datetime.fromtimestamp(mx / 1000, tz=MSK)
         duration_ms = mx - mn  # > 0 гарантировано (есть MIN и MAX в одной группе)
 
+        # Split-агрегаты за сессию. input+output == total. Edge case: сессия
+        # с messages, но без token_usage → (0, 0) → tokens=0, cost=$0.00
+        # (compute_cost корректно даёт 0.0 на нулях).
+        in_t, out_t = tok_rows.get(sid, (0, 0))
         rows.append(SessionRow(
             session_id=sid,
             title=title,
@@ -282,7 +300,9 @@ def collect_sessions(
             end_msk=end_dt.date(),
             max_ms=mx,
             duration_ms=duration_ms,
-            tokens=tok_rows.get(sid, 0),
+            tokens=in_t + out_t,
+            input_tokens=in_t,
+            output_tokens=out_t,
             requests=user,
             is_active=(status == "started"),
         ))
@@ -402,6 +422,14 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
     sessions_total = len(rows)
     active_total = sum(1 for r in rows if r.is_active)
 
+    # Total cost за окно: sum(in) + sum(out) → compute_cost. Суммируем split
+    # отдельно (а не cost per row), чтобы избежать float-drift между
+    # per-row cost (округление до 2 знаков) и общей суммой. Так же, как
+    # в build_project_dashboard.py::render_project_detail.
+    total_in = sum(r.input_tokens for r in rows)
+    total_out = sum(r.output_tokens for r in rows)
+    total_cost = compute_cost(total_in, total_out, DEFAULT_MODEL)
+
     # Table rows.
     body_rows: list[str] = []
     for r in rows:
@@ -411,6 +439,10 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
         date_esc = html.escape(format_date_cell(r.start_msk, r.end_msk))
         dur_esc = html.escape(format_duration(r.duration_ms))
         tok_esc = html.escape(format_tokens(r.tokens))
+        # Per-session cost — split-then-fmt_money, чтобы округление было
+        # per-row (видимое число) а не накопленным float-drift.
+        row_cost = compute_cost(r.input_tokens, r.output_tokens, DEFAULT_MODEL)
+        cost_esc = html.escape(fmt_money(row_cost))
         req_esc = str(int(r.requests))
         badge = '<span class="badge">active</span>' if r.is_active else ""
 
@@ -421,11 +453,12 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
             f"<td class=\"r\">{date_esc}</td>"
             f"<td class=\"r\">{dur_esc}</td>"
             f"<td class=\"r\">{tok_esc}</td>"
+            f"<td class=\"r\">{cost_esc}</td>"
             f"<td class=\"r\">{req_esc}</td>"
             f"</tr>"
         )
     body_html = "\n".join(body_rows) if body_rows else (
-        '      <tr><td colspan="6" class="empty center">'
+        '      <tr><td colspan="7" class="empty center">'
         "Нет сессий в окне</td></tr>"
     )
 
@@ -433,6 +466,7 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
     footer_left = f"{sessions_total} sessions · {len(weeks)} weeks ({week_labels})"
     if active_total:
         footer_left += f" · {active_total} active"
+    footer_right = f"{fmt_money(total_cost)} · MSK (UTC+3)"
 
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -573,6 +607,7 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
           <th class="r">Date</th>
           <th class="r">Duration</th>
           <th class="r">Tokens</th>
+          <th class="r">Cost</th>
           <th class="r">Requests</th>
         </tr>
       </thead>
@@ -582,7 +617,7 @@ def render_html(rows: list[SessionRow], now_msk: datetime, weeks: list[WeekSpan]
     </table>
     <div class="footer">
       <span>{html.escape(footer_left)}</span>
-      <span>MSK (UTC+3)</span>
+      <span>{html.escape(footer_right)}</span>
     </div>
   </div>
 </body>
