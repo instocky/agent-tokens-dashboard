@@ -136,12 +136,15 @@ def main() -> int:
 
     # Синтетические hourly — не открываем SQLite. Передаём напрямую.
     hourly = WEEKLY_PATTERN
+    # Split-версия для графиков: всё в output (как будто модель "генерит" — для
+    # DEMO это норм; в прод-данных будет реальная in/out разбивка из БД).
+    hourly_split = {k: (0, v) for k, v in hourly.items()}
 
     current_hour_tokens = compute_current_hour(hourly, today)
     today_tokens = compute_today(hourly, now_msk)
     window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
     window_wraps = current_window(now_msk)["wraps"]
-    weeks = compute_weekly(hourly, today)
+    weeks = compute_weekly(hourly_split, today)
 
     spark_current = compute_sparkline_current(hourly, now_msk)
     spark_today = compute_sparkline_today(hourly, now_msk)
@@ -161,7 +164,7 @@ def main() -> int:
         WEEKLY_CAP_TOKENS, today_spent, days_left
     )
 
-    today_24h_bars = compute_today_24h(hourly, now_msk)
+    today_24h_bars = compute_today_24h(hourly_split, now_msk)
     today_24h_peak_val = today_24h_peak(today_24h_bars)
 
     # Демо-данные для today_meta (sub-line карточки «Сегодня»). Подобраны

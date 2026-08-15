@@ -93,10 +93,17 @@ _SESSION_RECORD_TITLE_KEY = "title"
 
 @dataclass(frozen=True)
 class Week:
-    """Одна неделя для grouped-bar chart."""
+    """Одна неделя для grouped-bar chart.
+
+    `days` — total токенов (input + output) на каждый из 7 дней, None = no data.
+    `days_split` — пара (input, output) для тех же 7 дней; None там же, где
+    days=None. Параллельное поле вместо смены типа `days` сознательно:
+    существующий рендер/test-код продолжает работать с `days` как с int.
+    """
     label: str          # "W-32"
     monday: date        # понедельник этой недели (MSK)
-    days: list[int | None]   # 7 значений Пн..Вс, None = disabled/no data
+    days: list[int | None]   # 7 значений Пн..Вс, total, None = no data
+    days_split: list[tuple[int, int] | None]  # 7 пар (input, output)
     is_current: bool
 
 
@@ -114,9 +121,11 @@ class HourlyBar:
       Для future/empty = None (рендер сам выбирает класс).
     """
     hour: int           # 0..23
-    value: int          # токены за этот час (>= 0)
+    value: int          # токены за этот час (>= 0) = input_value + output_value
     state: str
     intensity: str | None  # "L1" | "L2" | "L3" | "L4" | None
+    input_value: int = 0   # входные токены (промпт) за этот час; для split-стека
+    output_value: int = 0  # выходные токены (комплишн) за этот час; для split-стека
 
 
 # ---- CLI -------------------------------------------------------------------
@@ -156,24 +165,45 @@ def aggregate_by_hour(con: sqlite3.Connection, since_msk_date: date) -> dict[tup
 
     Возвращает {(msk_date, msk_hour): tokens}, где tokens = input + output.
     Cache/reasoning/cost намеренно исключены (PRD §5).
+
+    Сейчас — тонкая обёртка над aggregate_by_hour_split: единая SQL-точка,
+    чтобы при добавлении колонок (cache/reasoning/cost в будущем) править
+    в одном месте. Старые callers (sparkline и т.п.) получают суммарный dict.
+    """
+    split = aggregate_by_hour_split(con, since_msk_date)
+    return {k: v[0] + v[1] for k, v in split.items()}
+
+
+def aggregate_by_hour_split(
+    con: sqlite3.Connection, since_msk_date: date
+) -> dict[tuple[date, int], tuple[int, int]]:
+    """SELECT (date, hour, input_tokens, output_tokens) GROUP BY date,hour.
+
+    Возвращает {(msk_date, msk_hour): (input_tokens, output_tokens)}.
+    Используется для split-стека на графиках (input внизу, output сверху):
+    `aggregate_by_hour` суммирует их — для sparkline/KPI этого достаточно,
+    для stacked bar chart нужны обе колонки раздельно.
+
+    SQL идентичен aggregate_by_hour по shape'у GROUP BY, только вместо
+    `SUM(input+output)` два отдельных SUM'а. Cache/reasoning/cost намеренно
+    исключены (PRD §5).
     """
     since_msk_midnight = datetime.combine(since_msk_date, datetime.min.time(), tzinfo=MSK)
     since_ts_ms = int(since_msk_midnight.timestamp() * 1000)
 
-    # Преобразование ms→MSK делаем в SQLite: '+3 hours' — детерминированно,
-    # не зависит от локали машины. strftime('%H') → строка, кастуем в INT.
     sql = """
         SELECT
             date(ts / 1000, 'unixepoch', '+3 hours')                          AS msk_date,
             CAST(strftime('%H', ts / 1000, 'unixepoch', '+3 hours') AS INT)  AS msk_hour,
-            COALESCE(SUM(input_tokens + output_tokens), 0)                    AS tokens
+            COALESCE(SUM(input_tokens),  0)                                  AS in_tok,
+            COALESCE(SUM(output_tokens), 0)                                  AS out_tok
         FROM local_runtime_token_usage
         WHERE ts >= ?
         GROUP BY msk_date, msk_hour
     """
-    out: dict[tuple[date, int], int] = {}
-    for d_str, h, tokens in con.execute(sql, (since_ts_ms,)):
-        out[(date.fromisoformat(d_str), int(h))] = int(tokens)
+    out: dict[tuple[date, int], tuple[int, int]] = {}
+    for d_str, h, in_tok, out_tok in con.execute(sql, (since_ts_ms,)):
+        out[(date.fromisoformat(d_str), int(h))] = (int(in_tok), int(out_tok))
     return out
 
 
@@ -362,9 +392,14 @@ def compute_current_window(
 
 
 def compute_weekly(
-    hourly: dict[tuple[date, int], int], today: date, week_count: int = WEEK_COUNT
+    hourly: dict[tuple[date, int], tuple[int, int]], today: date, week_count: int = WEEK_COUNT
 ) -> list[Week]:
     """Последние `week_count` недель, oldest-first.
+
+    Принимает SPLIT-словарь {(date, hour): (input, output)} (см.
+    aggregate_by_hour_split). Для каждого дня формирует и total (input+output),
+    и пару split — оба идут в Week.days / Week.days_split параллельно.
+    None в обоих списках в одних и тех же позициях (где данных нет вообще).
 
     Логика disabled-баров (None):
       - day_date > today           → None (будущее, данных быть не может)
@@ -383,20 +418,33 @@ def compute_weekly(
         is_current = (monday == current_monday)
 
         days: list[int | None] = []
+        days_split: list[tuple[int, int] | None] = []
         for d_idx in range(7):
             day_date = monday + timedelta(days=d_idx)
             if day_date > today:
                 # Будущий день (любой недели) — данных быть не может
                 days.append(None)
+                days_split.append(None)
                 continue
             # Прошедший день или сегодня: если ни одной строки в БД за этот день
-            # (любой час) — None (no data yet), иначе реальная сумма.
-            has_any = any((day_date, h) in hourly for h in range(24))
-            if not has_any:
+            # (любой час) — None (no data yet), иначе реальные суммы.
+            in_sum = sum(hourly.get((day_date, h), (0, 0))[0] for h in range(24))
+            out_sum = sum(hourly.get((day_date, h), (0, 0))[1] for h in range(24))
+            if in_sum == 0 and out_sum == 0:
                 days.append(None)
+                days_split.append(None)
                 continue
-            days.append(sum(hourly.get((day_date, h), 0) for h in range(24)))
-        weeks.append(Week(label=label, monday=monday, days=days, is_current=is_current))
+            days.append(in_sum + out_sum)
+            days_split.append((in_sum, out_sum))
+        weeks.append(
+            Week(
+                label=label,
+                monday=monday,
+                days=days,
+                days_split=days_split,
+                is_current=is_current,
+            )
+        )
     return weeks
 
 
@@ -472,7 +520,7 @@ def _intensity_level(value: int, sorted_active: list[int]) -> str:
 
 
 def compute_today_24h(
-    hourly: dict[tuple[date, int], int], now_msk: datetime
+    hourly: dict[tuple[date, int], tuple[int, int]], now_msk: datetime
 ) -> list[HourlyBar]:
     """24-часовая разбивка сегодняшнего дня (MSK) для карточки «24H STREAM».
 
@@ -491,11 +539,17 @@ def compute_today_24h(
     today = now_msk.date()
     now_h = now_msk.hour
 
-    # 1. Сырые значения по часам.
-    raw: list[tuple[int, int]] = [(h, hourly.get((today, h), 0)) for h in range(24)]
+    # 1. Сырые значения по часам: (hour, total, input, output).
+    #    hourly — split-словарь {(date, hour): (input, output)}.
+    raw: list[tuple[int, int, int, int]] = [
+        (h, hourly.get((today, h), (0, 0))[0] + hourly.get((today, h), (0, 0))[1],
+         hourly.get((today, h), (0, 0))[0],
+         hourly.get((today, h), (0, 0))[1])
+        for h in range(24)
+    ]
 
-    # 2. Находим peak: максимум среди h <= now_h. Если все нули — peak'а нет.
-    past = [(h, v) for h, v in raw if h <= now_h]
+    # 2. Находим peak: максимум среди h <= now_h по total. Если все нули — peak'а нет.
+    past = [(h, v) for h, v, _, _ in raw if h <= now_h]
     peak_hour: int | None = None
     peak_val: int = 0
     for h, v in past:
@@ -507,7 +561,7 @@ def compute_today_24h(
     sorted_active = sorted(v for _, v in past if v > 0)
 
     bars: list[HourlyBar] = []
-    for h, v in raw:
+    for h, v, in_v, out_v in raw:
         if h > now_h:
             state = "future"
             intensity = None
@@ -521,7 +575,16 @@ def compute_today_24h(
         else:
             state = "peak" if peak_hour == h else "active"
             intensity = _intensity_level(v, sorted_active)
-        bars.append(HourlyBar(hour=h, value=v, state=state, intensity=intensity))
+        bars.append(
+            HourlyBar(
+                hour=h,
+                value=v,
+                state=state,
+                intensity=intensity,
+                input_value=in_v,
+                output_value=out_v,
+            )
+        )
     return bars
 
 
@@ -1000,20 +1063,42 @@ def _render_weekly_grid(
                 cls = "bar future"
                 height_pct = 0.0
                 title_extra = "будущее"
+                style_extra = ""
             elif value is None:
                 cls = "bar future"
                 height_pct = 0.0
                 title_extra = "нет данных"
+                style_extra = ""
             else:
                 if week.is_current and day_d == today_d:
                     cls = "bar accent"
                 else:
                     cls = "bar history"
                 height_pct = _bar_height_pct(value, scale, y_info)
-                title_extra = fmt_int(value)
+                # Split-стек через inline linear-gradient: input (внизу) →
+                # output (сверху) одним градиентом, без inner div'ов и seams.
+                # CSS-vars --bar-in / --bar-out приходят с класса родителя
+                # (.bar.history / .bar.accent), inline-стиль использует их.
+                split = week.days_split[d_idx]
+                if split is not None:
+                    in_v, out_v = split
+                    total = in_v + out_v
+                    in_pct = (in_v / total * 100.0) if total > 0 else 0.0
+                    style_extra = (
+                        f";background:linear-gradient(to top,"
+                        f"var(--bar-in) 0% {in_pct:.1f}%,"
+                        f"var(--bar-out) {in_pct:.1f}% 100%)"
+                    )
+                    title_extra = (
+                        f"↑{fmt_int(in_v)} · ↓{fmt_int(out_v)} (Σ {fmt_int(value)})"
+                    )
+                else:
+                    style_extra = ""
+                    title_extra = fmt_int(value)
             title = f"{week.label}, {WEEKDAY_LABELS[d_idx]}: {title_extra}"
             cell_inner = (
-                f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
+                f'<div class="{cls}" '
+                f'style="height:{height_pct:.1f}%{style_extra}" title="{title}"></div>'
             )
 
             # Threshold рисуем ТОЛЬКО для текущего дня текущей недели, и только
@@ -1038,13 +1123,20 @@ def _render_weekly_grid(
         # Сумма за неделю — только по дням с данными (None — no data, не 0).
         week_total = sum(v for v in week.days if v is not None)
         week_total_str = f"{week_total / 1_000_000:.2f}M"
+        # Tooltip недели — split-разбивка total'а (↑ in, ↓ out).
+        week_in = sum(s[0] for s in week.days_split if s is not None)
+        week_out = sum(s[1] for s in week.days_split if s is not None)
+        week_title = (
+            f"Сумма за {week.label}: ↑{fmt_int(week_in)} · ↓{fmt_int(week_out)} "
+            f"(Σ {fmt_int(week_total)})"
+        )
         week_cls = "week current" if week.is_current else "week"
         days_html = "".join(f"<span>{lbl}</span>" for lbl in WEEKDAY_LABELS)
         out.append(
             f'<div class="{week_cls}">'
             f'<div class="week-head">'
             f'<span class="week-label">{week.label}</span>'
-            f'<span class="week-total" title="Сумма за {week.label}">{week_total_str}</span>'
+            f'<span class="week-total" title="{week_title}">{week_total_str}</span>'
             f'</div>'
             f'<div class="bars">{"".join(bars)}</div>'
             f'<div class="days">{days_html}</div>'
@@ -1103,7 +1195,30 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
             cls = "bar-24h empty"
             height_pct = 0.0
 
-        title = f"{b.hour:02d}:00–{b.hour:02d}:59: {fmt_int(b.value) if b.value else 'нет данных'}"
+        # Split-стек через inline linear-gradient: input (внизу) → output
+        # (сверху) одним градиентом. Без inner div'ов → без seams на границе
+        # слоёв (см. memory: <tr>[hidden] и подобные случаи, когда два слоя
+        # с разными border-radius дают артефакт "cuff"). CSS-vars --bar-in /
+        # --bar-out приходят с класса родителя.
+        # Соглашение стрелок в tooltip: ↑ = input (входит в модель),
+        # ↓ = output (выходит из модели).
+        if b.value > 0:
+            total = b.input_value + b.output_value
+            in_pct = (b.input_value / total * 100.0) if total > 0 else 0.0
+            style_extra = (
+                f";background:linear-gradient(to top,"
+                f"var(--bar-in) 0% {in_pct:.1f}%,"
+                f"var(--bar-out) {in_pct:.1f}% 100%)"
+            )
+            title = (
+                f"{b.hour:02d}:00–{b.hour:02d}:59: "
+                f"↑{fmt_int(b.input_value)} · ↓{fmt_int(b.output_value)} "
+                f"(Σ {fmt_int(b.value)})"
+            )
+        else:
+            style_extra = ""
+            title = f"{b.hour:02d}:00–{b.hour:02d}:59: нет данных"
+
         label_cls = "hour-label" + (" hour-label--future" if b.state == "future" else "")
         # Лейбл значения над peak-баром (TL, 2026-08-05): для остальных
         # ячеек не рендерим — bar layout не сдвигается (absolute positioning
@@ -1115,7 +1230,7 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
         cells.append(
             f'<div class="hour-cell" data-hour="{b.hour}">'
             f'{peak_value_html}'
-            f'<div class="{cls}" style="height:{height_pct:.1f}%" title="{title}"></div>'
+            f'<div class="{cls}" style="height:{height_pct:.1f}%{style_extra}" title="{title}"></div>'
             f'<span class="{label_cls}">{b.hour:02d}</span>'
             f"</div>"
         )
@@ -1888,11 +2003,17 @@ def render_html(
       display: flex; align-items: end;
     }}
     .bar {{
+      /* Split-стек делается inline linear-gradient (см. _render_weekly_grid).
+         Один элемент = один border-radius = ноль seams между слоями. */
       width: 100%; border-radius: 10px 10px 0 0; min-height: 6px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
     }}
-    .bar.history {{ background: var(--history); }}
-    .bar.accent  {{ background: linear-gradient(180deg, #a78bfa, #8b5cf6); }}
+    /* Цвета слоёв задаются через CSS-vars; inline-градиент читает их.
+       Fallback на случай отсутствия inline-стиля (no-data bar):
+       .bar.history — var(--history), .bar.accent — фиолетовый градиент. */
+    .bar.history {{ background: var(--history); --bar-in: #4a5070; --bar-out: var(--history); }}
+    .bar.accent  {{ background: linear-gradient(180deg, #a78bfa, #8b5cf6);
+                   --bar-in: #4a5070; --bar-out: #8b5cf6; }}
     .bar.future {{
       background: rgba(255,255,255,0.03);
       border: 1px dashed rgba(255,255,255,0.12);
@@ -1962,21 +2083,21 @@ def render_html(
       pointer-events: none;
     }}
     .bar-24h {{
+      /* Split-стек делается inline linear-gradient (см. _render_24h_stream).
+         Один элемент = один border-radius = ноль seams между слоями. */
       width: 100%; flex: 0 1 auto; align-self: end;
       border-radius: 6px 6px 2px 2px; min-height: 2px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
       transition: filter 0.15s ease;
     }}
     .bar-24h:hover {{ filter: brightness(1.18); }}
-    /* Single-shade palette (TL review, 2026-08-05): все бары с данными
-       (active / peak / current) — один и тот же тёмно-зелёный #216e39.
-       Величина читается только высотой; peak — самый высокий бар, без
-       отдельного bright accent. L1..L3 шкала GitHub-палитры убрана
-       как избыточная — она дублировала height-кодирование. */
+    /* Single-shade palette (TL review, 2026-08-05): бары с данными — тёмно-зелёный
+       #216e39 для output. Inline-градиент комбинирует --bar-in (input) снизу
+       и --bar-out (output) сверху по высоте P%. */
     .bar-24h.active,
     .bar-24h.peak,
     .bar-24h.current {{
-      background: #216e39;
+      --bar-in: #4a5070; --bar-out: #216e39;
     }}
     /* Peak больше не имеет bright accent — отличается от active только
        позицией в meta-строке карточки и тем, что это самый высокий бар. */
@@ -2217,9 +2338,14 @@ def main() -> int:
     log(f"[build] since = {since} (Monday of W-{since.isocalendar()[1]})")
 
     with open_db(args.db) as con:
-        hourly = aggregate_by_hour(con, since)
+        # Split-словарь {(date, hour): (input, output)} — для графиков с
+        # in/out разбивкой (24h stack, weekly stack). Sum-словарь — для
+        # sparkline, current window, prev hour (им split не нужен).
+        # Один SQL через aggregate_by_hour_split; sum получаем деривацией.
+        hourly_split = aggregate_by_hour_split(con, since)
+        hourly = {k: in_v + out_v for k, (in_v, out_v) in hourly_split.items()}
 
-    log(f"[build] aggregated {len(hourly)} (date,hour) buckets")
+    log(f"[build] aggregated {len(hourly_split)} (date,hour) buckets")
 
     now_msk = datetime.now(MSK)
 
@@ -2259,7 +2385,7 @@ def main() -> int:
     )
     window_total, window_entries, window_label = compute_current_window(hourly, now_msk)
     window_wraps = current_window(now_msk)["wraps"]
-    weeks = compute_weekly(hourly, today)
+    weeks = compute_weekly(hourly_split, today)
 
     # Sparklines (3 KPI) + предыдущие периоды (для дельты)
     spark_current = compute_sparkline_current(hourly, now_msk)
@@ -2315,7 +2441,7 @@ def main() -> int:
         log(f"[build]   {w.label} ({'current' if w.is_current else 'past  '})  [{days_repr}]")
 
     # 24h stream: 24 бара по часам сегодня (для новой карточки "Today · 24H Stream").
-    today_24h_bars = compute_today_24h(hourly, now_msk)
+    today_24h_bars = compute_today_24h(hourly_split, now_msk)
     today_24h_peak_val = today_24h_peak(today_24h_bars)
     if today_24h_peak_val is not None:
         ph, pv = today_24h_peak_val

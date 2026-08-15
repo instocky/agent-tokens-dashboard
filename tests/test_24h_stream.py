@@ -39,6 +39,17 @@ def _bar_at(bars: list[HourlyBar], hour: int) -> HourlyBar:
     return matches[0]
 
 
+def _as_split(sum_dict: dict[tuple[date, int], int]) -> dict[tuple[date, int], tuple[int, int]]:
+    """Test-helper: оборачивает sum-словарь в split-словарь (всё в output).
+
+    compute_today_24h принимает split-формат, а тесты исторически строили
+    sum-словарь. Чтобы не переписывать все конструкции {(today, h): N} →
+    {(today, h): (0, N)}, конвертируем на входе. Для тестов семантически
+    эквивалентно (input=0, output=total).
+    """
+    return {k: (0, v) for k, v in sum_dict.items()}
+
+
 # ---- _intensity_level ----------------------------------------------------
 
 def test_intensity_quartiles_8_values() -> None:
@@ -92,14 +103,14 @@ def test_intensity_zero_returns_L2_fallback() -> None:
 def test_today_24h_returns_24_bars_ordered() -> None:
     """Ровно 24 бара, hours 0..23 в возрастающем порядке."""
     hourly: dict[tuple[date, int], int] = {}
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     assert len(bars) == 24
     assert [b.hour for b in bars] == list(range(24))
 
 
 def test_today_24h_empty_day_at_14() -> None:
     """now=14, нет данных: hours 0..13 = empty, 14 = current, 15..23 = future."""
-    bars = compute_today_24h({}, _now(14))
+    bars = compute_today_24h(_as_split({}), _now(14))
     states = [b.state for b in bars]
     # 0..13 — empty
     for h in range(0, 14):
@@ -122,7 +133,7 @@ def test_today_24h_current_at_hour_0() -> None:
     """Граничный кейс: now=0. h=0 — current (value=0, чтобы не стать peak'ом
     из-за единственных данных). Всё остальное future."""
     # value=0 в current → peak_val=0 → peak_hour=None → current остаётся current.
-    bars = compute_today_24h({}, _now(0))
+    bars = compute_today_24h(_as_split({}), _now(0))
     assert _bar_at(bars, 0).state == "current"
     assert _bar_at(bars, 0).value == 0
     for h in range(1, 24):
@@ -134,7 +145,7 @@ def test_today_24h_current_at_hour_23() -> None:
     прошлые часы, чтобы current=23 не оказался пиком."""
     today = date(2026, 8, 4)
     hourly: dict[tuple[date, int], int] = {(today, 10): 5_000}
-    bars = compute_today_24h(hourly, _now(23))
+    bars = compute_today_24h(_as_split(hourly), _now(23))
     assert _bar_at(bars, 23).state == "current"
     assert _bar_at(bars, 23).value == 0  # в текущий час ещё нет данных
     # h=10 — peak, остальные — empty
@@ -155,7 +166,7 @@ def test_today_24h_peak_in_past() -> None:
         (today, 10): 500_000,  # peak
         (today, 14): 50_000,   # current
     }
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     assert _bar_at(bars, 10).state == "peak"
     assert _bar_at(bars, 14).state == "current"
     assert _bar_at(bars, 5).state == "active"
@@ -170,7 +181,7 @@ def test_today_24h_current_is_peak() -> None:
         (today, 10): 100_000,
         (today, 14): 900_000,  # current AND peak
     }
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     cur = _bar_at(bars, 14)
     assert cur.state == "peak"
     assert cur.value == 900_000
@@ -180,7 +191,7 @@ def test_today_24h_current_is_peak() -> None:
 def test_today_24h_peak_with_zero_value_current() -> None:
     """Если current=0 и past_max=0 — peak=None, current не становится peak."""
     hourly: dict[tuple[date, int], int] = {}
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     assert _bar_at(bars, 14).state == "current"
     assert _bar_at(bars, 14).value == 0
     assert today_24h_peak(bars) is None
@@ -194,7 +205,7 @@ def test_today_24h_peak_uses_value_not_hour() -> None:
         (today, 13): 10,
         (today, 14): 1000,  # current
     }
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     assert _bar_at(bars, 14).state == "peak"
     assert _bar_at(bars, 13).state == "active"
 
@@ -208,7 +219,7 @@ def test_today_24h_intensity_distributes_across_levels() -> None:
         (today, h): 1000 * (h + 1)  # 1k, 2k, 3k, ... 8k
         for h in range(8)  # 0..7
     }
-    bars = compute_today_24h(hourly, _now(10))
+    bars = compute_today_24h(_as_split(hourly), _now(10))
     intensities = {
         _bar_at(bars, h).intensity for h in range(0, 8)
     }
@@ -225,7 +236,7 @@ def test_today_24h_intensity_excludes_peak_class() -> None:
     .peak БЕЗ intensity-*. Проверяем, что state — peak."""
     today = date(2026, 8, 4)
     hourly: dict[tuple[date, int], int] = {(today, 10): 100_000}
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     peak_bar = _bar_at(bars, 10)
     assert peak_bar.state == "peak"
     # intensity может быть любым L* — рендер всё равно применяет только .peak
@@ -237,7 +248,7 @@ def test_today_24h_past_have_intensity() -> None:
     hourly: dict[tuple[date, int], int] = {
         (today, h): 1000 for h in (1, 5, 9, 12, 14)
     }
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     for h in (1, 5, 9, 12, 14):
         b = _bar_at(bars, h)
         assert b.intensity in ("L1", "L2", "L3", "L4"), (
@@ -249,7 +260,7 @@ def test_today_24h_empty_have_no_intensity() -> None:
     """empty/future — intensity=None (рендер игнорирует)."""
     today = date(2026, 8, 4)
     hourly: dict[tuple[date, int], int] = {(today, 0): 1_000_000}
-    bars = compute_today_24h(hourly, _now(14))
+    bars = compute_today_24h(_as_split(hourly), _now(14))
     # h=0 был бы peak, не empty
     for h in range(1, 14):
         b = _bar_at(bars, h)
@@ -259,6 +270,68 @@ def test_today_24h_empty_have_no_intensity() -> None:
         b = _bar_at(bars, h)
         assert b.state == "future"
         assert b.intensity is None
+
+
+# ---- HourlyBar split (input/output) -------------------------------------
+
+def test_hourly_bar_split_populated_from_dict() -> None:
+    """compute_today_24h корректно прокидывает input/output из split-словаря
+    в HourlyBar.input_value / HourlyBar.output_value.
+
+    Фиксируем инвариант: value == input_value + output_value (sum-контракт
+    сохранён), input_value и output_value — то, что было в (date, hour) кортеже.
+    """
+    today = date(2026, 8, 4)
+    hourly_split: dict[tuple[date, int], tuple[int, int]] = {
+        (today, 10): (4_000, 16_000),   # input=4K, output=16K, total=20K
+        (today, 11): (0, 5_000),        # только output
+        (today, 12): (3_000, 0),        # только input
+    }
+    bars = compute_today_24h(hourly_split, _now(14))
+    b10 = _bar_at(bars, 10)
+    assert b10.input_value == 4_000
+    assert b10.output_value == 16_000
+    assert b10.value == 20_000, "value = input + output (sum-контракт)"
+
+    b11 = _bar_at(bars, 11)
+    assert b11.input_value == 0
+    assert b11.output_value == 5_000
+    assert b11.value == 5_000
+
+    b12 = _bar_at(bars, 12)
+    assert b12.input_value == 3_000
+    assert b12.output_value == 0
+    assert b12.value == 3_000
+
+
+def test_hourly_bar_split_zero_when_no_data() -> None:
+    """Если в split-словаре нет ключа (today, h) — input=output=0.
+
+    Это контракт для future/empty баров: они никогда не показывают in/out
+    (в HTML рендерятся без stack'а), но поля всё равно должны быть int 0.
+    """
+    bars = compute_today_24h({}, _now(14))
+    for b in bars:
+        assert b.input_value == 0
+        assert b.output_value == 0
+
+
+def test_hourly_bar_split_preserves_peak_selection_on_sum() -> None:
+    """Peak выбирается по sum (value), а не по input или output.
+
+    Кейс: h=10 имеет input=100K, output=10 (sum=100010).
+    h=11 имеет input=50K, output=60K (sum=110K — больше).
+    Peak должен быть h=11, а не h=10.
+    """
+    today = date(2026, 8, 4)
+    hourly_split: dict[tuple[date, int], tuple[int, int]] = {
+        (today, 10): (100_000, 10),  # sum=100_010
+        (today, 11): (50_000, 60_000),  # sum=110_000 (peak)
+    }
+    bars = compute_today_24h(hourly_split, _now(14))
+    assert _bar_at(bars, 11).state == "peak"
+    assert _bar_at(bars, 11).input_value == 50_000
+    assert _bar_at(bars, 11).output_value == 60_000
 
 
 # ---- runner --------------------------------------------------------------
@@ -282,6 +355,9 @@ def main() -> int:
         test_today_24h_intensity_excludes_peak_class,
         test_today_24h_past_have_intensity,
         test_today_24h_empty_have_no_intensity,
+        test_hourly_bar_split_populated_from_dict,
+        test_hourly_bar_split_zero_when_no_data,
+        test_hourly_bar_split_preserves_peak_selection_on_sum,
     ]
     failed = 0
     for t in tests:

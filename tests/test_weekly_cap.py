@@ -107,12 +107,19 @@ def _make_weeks_for_render(
             label="W-31",
             monday=date(2026, 7, 27),
             days=[5_000_000, 6_000_000, 7_000_000, 4_000_000, 5_500_000, 3_000_000, 4_500_000],
+            # days_split — total кладём в output (input=0); эти тесты
+            # проверяют threshold/render логику, split не валидируют.
+            days_split=[(0, v) for v in [5_000_000, 6_000_000, 7_000_000,
+                                          4_000_000, 5_500_000, 3_000_000, 4_500_000]],
             is_current=(is_current_index == 0),
         ),
         Week(  # текущая
             label="W-32",
             monday=date(2026, 8, 3),
             days=[today_value, None, None, None, None, None, None],
+            # days_split параллелен days: None ⇔ None (нет данных).
+            days_split=[None if today_value is None else (0, today_value),
+                        None, None, None, None, None, None],
             is_current=(is_current_index == 1),
         ),
     ]

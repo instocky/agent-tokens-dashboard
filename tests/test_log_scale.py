@@ -21,14 +21,21 @@ from build_dashboard import (  # noqa: E402
 
 
 def _make_weeks(specs: list[list[int | None]]) -> list[Week]:
-    """Собрать Week-список из таблицы значений. specs[0] = самая старая."""
+    """Собрать Week-список из таблицы значений. specs[0] = самая старая.
+
+    days_split — парный список, параллельный days: total кладём в output
+    (input=0). Тесты log_scale работают с total'ами и не валидируют split,
+    но Week теперь требует оба поля параллельно.
+    """
     out: list[Week] = []
     for i, days in enumerate(specs):
+        days_split = [None if v is None else (0, v) for v in days]
         out.append(
             Week(
                 label=f"W-{30 + i}",
                 monday=date(2026, 7, 27) if i == 0 else date(2026, 8, 3),  # упрощённо
                 days=days,
+                days_split=days_split,
                 is_current=(i == len(specs) - 1),
             )
         )
@@ -129,7 +136,9 @@ def test_render_weekly_grid_linear_smoke() -> None:
     assert "W-31" in html
     assert 'class="week' in html
     assert 'class="bar history"' in html
-    # 7 дней × 2 недели = 14 баров с height:NN.N%
+    # 7 дней × 2 недели = 14 баров. Split-стек через inline linear-gradient
+    # на самом .bar → 1 style="height:" на бар (split gradient добавляется
+    # через ";background:..." в тот же style, отдельных div'ов нет).
     assert html.count('style="height:') == 14
     # Лейблы дней под барами
     for label in WEEKDAY_LABELS:
@@ -150,7 +159,9 @@ def test_render_weekly_grid_log_smoke() -> None:
     linear_html = _render_weekly_grid(weeks, "linear", 27_000_000)
     import re
     def _h(s: str, day: str) -> float:
-        m = re.search(rf'class="bar (?:history|accent)" style="height:([\d.]+)%" title="[^"]*, {day}: ', s)
+        # style="height:N%";background:linear-gradient(...)"; — inline gradient
+        # добавляется между height и title, поэтому regex терпим к ";...".
+        m = re.search(rf'class="bar (?:history|accent)" style="height:([\d.]+)%[^"]*" title="[^"]*, {day}: ', s)
         return float(m.group(1)) if m else -1.0
     # Вторник W-30 = 9M
     assert _h(html, "Вт") > _h(linear_html, "Вт"), "log должен сжимать диапазон, делая нижние значения выше"
@@ -180,9 +191,13 @@ def test_render_weekly_grid_none_day_title() -> None:
         [0, 8_000_000, 9_000_000, 11_000_000, 12_000_000, 16_000_000, 17_000_000],
     ])
     html2 = _render_weekly_grid(weeks2, "linear", 20_000_000)
-    # Понедельник с 0 → history (не future), height=0% (CSS min-height даст 6px)
-    assert 'class="bar history" style="height:0.0%"' in html2
-    assert 'W-30, Пн: 0' in html2
+    # Понедельник с 0 → history (не future), height=0% (CSS min-height даст 6px).
+    # Inline gradient добавляется через ";background:linear-gradient(...)" — поэтому
+    # проверяем только class + начало style, не exact-prefix.
+    assert 'class="bar history" style="height:0.0%' in html2
+    # 0-value день: split-стек рендерится с title формата "↑0 · ↓0 (Σ 0)"
+    # (split=0/0, total=0). Это и есть сигнал "нулевой день".
+    assert 'W-30, Пн: ↑0 · ↓0 (Σ 0)' in html2
 
 
 def test_render_weekly_grid_week_total() -> None:
@@ -213,7 +228,9 @@ def test_render_weekly_grid_week_total_all_none() -> None:
         [None] * 7,
     ])
     html = _render_weekly_grid(weeks, "linear", 1_000_000)
-    assert '<span class="week-total" title="Сумма за W-30">0.00M</span>' in html
+    # week-total с split-tooltip: "Сумма за W-30: ↑0 · ↓0 (Σ 0)" (все дни None
+    # → in=0, out=0, total=0). Численное значение остаётся 0.00M.
+    assert '<span class="week-total" title="Сумма за W-30: ↑0 · ↓0 (Σ 0)">0.00M</span>' in html
 
 
 def test_bar_axis_share_coordinate_system() -> None:
