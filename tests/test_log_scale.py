@@ -195,9 +195,9 @@ def test_render_weekly_grid_none_day_title() -> None:
     # Inline gradient добавляется через ";background:linear-gradient(...)" — поэтому
     # проверяем только class + начало style, не exact-prefix.
     assert 'class="bar history" style="height:0.0%' in html2
-    # 0-value день: split-стек рендерится с title формата "↑0 · ↓0 (Σ 0)"
-    # (split=0/0, total=0). Это и есть сигнал "нулевой день".
-    assert 'W-30, Пн: ↑0 · ↓0 (Σ 0)' in html2
+    # 0-value день: split-стек рендерится с title формата "↑0 · ↓0 (Σ 0 · $0.00)"
+    # (split=0/0, total=0, cost=0). Это и есть сигнал "нулевой день".
+    assert 'W-30, Пн: ↑0 · ↓0 (Σ 0 · $0.00)' in html2
 
 
 def test_render_weekly_grid_week_total() -> None:
@@ -214,10 +214,12 @@ def test_render_weekly_grid_week_total() -> None:
     ])
     html = _render_weekly_grid(weeks, "linear", 27_000_000)
     import re
+    # week-total стал vertical fraction (tokens / cost); числовое значение
+    # токенов теперь лежит в .week-total__tokens, не в самом .week-total.
     totals = re.findall(
-        r'<span class="week-total" title="[^"]+">([\d.]+M)</span>', html
+        r'<span class="week-total__tokens">([\d.]+M)</span>', html
     )
-    assert len(totals) == 2, f"expected 2 week-total, got {totals}"
+    assert len(totals) == 2, f"expected 2 week-total tokens, got {totals}"
     assert totals[0] == "62.50M", f"past week total = {totals[0]}"
     assert totals[1] == "74.00M", f"current week total = {totals[1]}"
 
@@ -228,9 +230,13 @@ def test_render_weekly_grid_week_total_all_none() -> None:
         [None] * 7,
     ])
     html = _render_weekly_grid(weeks, "linear", 1_000_000)
-    # week-total с split-tooltip: "Сумма за W-30: ↑0 · ↓0 (Σ 0)" (все дни None
-    # → in=0, out=0, total=0). Численное значение остаётся 0.00M.
-    assert '<span class="week-total" title="Сумма за W-30: ↑0 · ↓0 (Σ 0)">0.00M</span>' in html
+    # week-total с split-tooltip: "Сумма за W-30: ↑0 · ↓0 (Σ 0 · $0.00)"
+    # (все дни None → in=0, out=0, total=0, cost=0). Численное значение 0.00M
+    # лежит в .week-total__tokens (vertical fraction).
+    assert (
+        '<span class="week-total" title="Сумма за W-30: ↑0 · ↓0 (Σ 0 · $0.00)">'
+        '<span class="week-total__tokens">0.00M</span>'
+    ) in html
 
 
 def test_bar_axis_share_coordinate_system() -> None:

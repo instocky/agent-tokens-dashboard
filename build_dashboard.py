@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from config import DEFAULT_MODEL, compute_cost, fmt_money
+
 # ---- constants -------------------------------------------------------------
 
 # Абсолютные пути по умолчанию — рядом со скриптом. Переопределяются --db/--out.
@@ -1049,8 +1051,16 @@ def _render_weekly_grid(
     не рисуется. Если today_spent > threshold, бар визуально выше линии —
     это и есть сигнал «превысил, на завтра уровень пересчитается».
 
+    Шапка карточки (W-лэйбл + итог):
+      .week-total — vertical fraction tokens/cost:
+        78.99M
+        ───────
+        $5.40
+      Разделитель — 1px линия через .week-total__sep. Цена считается через
+      compute_cost(in, out, DEFAULT_MODEL) — единая точка истины для всех
+      подписей (см. config.py).
+
     Высота — % от 260px контейнера (через _bar_height_pct).
-    В шапке карточки — W-лэйбл слева + суммарный объём за неделю в M справа.
     """
     today_d = date.today()
     out: list[str] = []
@@ -1089,8 +1099,10 @@ def _render_weekly_grid(
                         f"var(--bar-in) 0% {in_pct:.1f}%,"
                         f"var(--bar-out) {in_pct:.1f}% 100%)"
                     )
+                    day_cost = compute_cost(in_v, out_v, DEFAULT_MODEL)
                     title_extra = (
-                        f"↑{fmt_int(in_v)} · ↓{fmt_int(out_v)} (Σ {fmt_int(value)})"
+                        f"↑{fmt_int(in_v)} · ↓{fmt_int(out_v)} "
+                        f"(Σ {fmt_int(value)} · {fmt_money(day_cost)})"
                     )
                 else:
                     style_extra = ""
@@ -1123,20 +1135,30 @@ def _render_weekly_grid(
         # Сумма за неделю — только по дням с данными (None — no data, не 0).
         week_total = sum(v for v in week.days if v is not None)
         week_total_str = f"{week_total / 1_000_000:.2f}M"
-        # Tooltip недели — split-разбивка total'а (↑ in, ↓ out).
+        # Tooltip недели — split-разбивка total'а (↑ in, ↓ out) + cost.
         week_in = sum(s[0] for s in week.days_split if s is not None)
         week_out = sum(s[1] for s in week.days_split if s is not None)
+        week_cost = compute_cost(week_in, week_out, DEFAULT_MODEL)
         week_title = (
             f"Сумма за {week.label}: ↑{fmt_int(week_in)} · ↓{fmt_int(week_out)} "
-            f"(Σ {fmt_int(week_total)})"
+            f"(Σ {fmt_int(week_total)} · {fmt_money(week_cost)})"
         )
         week_cls = "week current" if week.is_current else "week"
         days_html = "".join(f"<span>{lbl}</span>" for lbl in WEEKDAY_LABELS)
+        # Vertical fraction: tokens / cost. Один контейнер (.week-total)
+        # держит два span'а и разделитель; CSS превращает его в столбик.
+        week_total_html = (
+            f'<span class="week-total" title="{week_title}">'
+            f'<span class="week-total__tokens">{week_total_str}</span>'
+            f'<span class="week-total__sep" aria-hidden="true"></span>'
+            f'<span class="week-total__cost">{fmt_money(week_cost)}</span>'
+            f'</span>'
+        )
         out.append(
             f'<div class="{week_cls}">'
             f'<div class="week-head">'
             f'<span class="week-label">{week.label}</span>'
-            f'<span class="week-total" title="{week_title}">{week_total_str}</span>'
+            f'{week_total_html}'
             f'</div>'
             f'<div class="bars">{"".join(bars)}</div>'
             f'<div class="days">{days_html}</div>'
@@ -1210,10 +1232,11 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
                 f"var(--bar-in) 0% {in_pct:.1f}%,"
                 f"var(--bar-out) {in_pct:.1f}% 100%)"
             )
+            hour_cost = compute_cost(b.input_value, b.output_value, DEFAULT_MODEL)
             title = (
                 f"{b.hour:02d}:00–{b.hour:02d}:59: "
                 f"↑{fmt_int(b.input_value)} · ↓{fmt_int(b.output_value)} "
-                f"(Σ {fmt_int(b.value)})"
+                f"(Σ {fmt_int(b.value)} · {fmt_money(hour_cost)})"
             )
         else:
             style_extra = ""
@@ -1223,10 +1246,18 @@ def _render_24h_stream(bars: list[HourlyBar], today_total: int) -> str:
         # Лейбл значения над peak-баром (TL, 2026-08-05): для остальных
         # ячеек не рендерим — bar layout не сдвигается (absolute positioning
         # относительно .hour-cell, top:5px).
-        peak_value_html = (
-            f'<span class="peak-value">{fmt_tokens(b.value)}</span>'
-            if b.state == "peak" else ""
-        )
+        # Vertical fraction tokens / cost — тот же pattern, что в week-total.
+        if b.state == "peak":
+            peak_cost = compute_cost(b.input_value, b.output_value, DEFAULT_MODEL)
+            peak_value_html = (
+                f'<span class="peak-value" title="{fmt_money(peak_cost)} · {fmt_int(b.value)} токенов">'
+                f'<span class="peak-value__tokens">{fmt_tokens(b.value)}</span>'
+                f'<span class="peak-value__sep" aria-hidden="true"></span>'
+                f'<span class="peak-value__cost">{fmt_money(peak_cost)}</span>'
+                f'</span>'
+            )
+        else:
+            peak_value_html = ""
         cells.append(
             f'<div class="hour-cell" data-hour="{b.hour}">'
             f'{peak_value_html}'
@@ -1965,11 +1996,36 @@ def render_html(
       font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
     }}
     .week-total {{
+      /* Vertical fraction: tokens сверху, разделитель, cost снизу.
+         flex-column + align-items:flex-end выравнивает стопку по правому
+         краю, как раньше был выровнен одиночный "78.99M" (week-head —
+         flex-row, space-between; правый child = .week-total). */
+      display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
       font-size: 12px; font-weight: 700; color: var(--ink);
       text-transform: none; letter-spacing: -0.01em;
+      line-height: 1.05;  /* компактный столбик, иначе "78.99M" + "$5.40"
+                             распирают week-head по вертикали и могут
+                             пересечься с верхним баром (z-index 3 всё
+                             равно спасает, но визуально шумно) */
+    }}
+    .week-total__tokens {{ /* тот же размер/цвет, что был у одиночного "78.99M" */ }}
+    .week-total__sep {{
+      /* Тонкая горизонтальная линия-разделитель между tokens и cost.
+         Ширина 100% относительно .week-total (= ширине самого длинного
+         из двух span'ов, за счёт align-items:flex-end выше). */
+      width: 100%; height: 1px; background: currentColor; opacity: 0.35;
+      margin: 1px 0;
+    }}
+    .week-total__cost {{
+      /* Цена — вторичная метрика: меньше кегль + приглушённый цвет. Не
+         наследует var(--accent) у .week.current (это бы перегрузило
+         активную неделю — accent оставляем только на tokens). */
+      font-size: 10px; font-weight: 600; color: var(--muted);
+      letter-spacing: 0.01em;
     }}
     .week.current .week-total {{ color: var(--accent); }}
+    .week.current .week-total__cost {{ color: var(--muted); }}
     /* .bars — absolute, занимает ровно 0%..(100% - 10.5%) .week.
        bottom:10.5% (вместо 38px) — чтобы при квадратной карточке (aspect-ratio:1,
        .week-height = .week-width ≈ 259px) shared coord system с осью не
@@ -2081,6 +2137,19 @@ def render_html(
       # font: 600 11px/1 var(--font);
       letter-spacing: 0.02em;
       pointer-events: none;
+      /* Vertical fraction: tokens сверху, разделитель, cost снизу.
+         Аналогично .week-total, но без выравнивания по правому краю
+         (label центрирован в колонке часа). */
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      line-height: 1.05;
+    }}
+    .peak-value__tokens {{ font-weight: 700; }}
+    .peak-value__sep {{
+      width: 70%; height: 1px; background: currentColor; opacity: 0.35;
+    }}
+    .peak-value__cost {{
+      font-size: 10px; font-weight: 600; color: var(--muted);
+      letter-spacing: 0.01em;
     }}
     .bar-24h {{
       /* Split-стек делается inline linear-gradient (см. _render_24h_stream).
