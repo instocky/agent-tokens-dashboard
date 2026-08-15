@@ -81,6 +81,43 @@ def test_y_ticks_for_log_tight_range() -> None:
     assert len(ticks) >= 2, f"expected ≥2 ticks, got {ticks}"
 
 
+def test_y_ticks_for_log_clamps_outlier_min() -> None:
+    """Регресс: outlier min (30K) при max=25M не должен растягивать шкалу.
+
+    Воспроизводит реальную ситуацию 2026-08-15: W-33 Сб (сегодня) = 29 811,
+    W-30 Ср = 25 774 768. Без клампа exp_min=floor(log10(29811))=4 → шкала
+    10K..100M (4 интервала, 5 тиков), 5M-бар визуально поднимается к 10M-тику.
+    С клампом шкала 100K..100M (3 интервала, 4 тика), 5M-бар сидит между
+    1M и 10M ниже середины.
+    """
+    weeks = _make_weeks([
+        [15_605_183, 18_869_249, 25_774_768, 5_217_870, 13_519_602, None, None],
+        [4_962_717, 872_925, 2_210_176, 3_229_400, 1_511_997, 3_505_283, 153_176],
+        [3_707_769, 5_131_456, 6_969_754, 2_254_057, 6_602_907, 2_024_237, 1_934_510],
+        # current: сегодня = Сб с 29 811 (low-volume «хвост»)
+        [3_980_681, 6_944_641, 2_783_673, 1_886_524, 325_921, 29_811, None],
+    ])
+    result = _y_ticks_for_log(weeks)
+    assert result is not None
+    y_min, y_max, ticks = result
+    # max=25.77M → exp_max_raw=7, +1 headroom → exp_max=8 → y_max=100M.
+    # Кламп exp_max - exp_min ≤ 3: 8 - 4 = 4 > 3 → exp_min = 5 (100K).
+    # Без клампа exp_min был бы 4 (от 29 811) → y_min=10K и шкала 10K..100M.
+    assert y_min == 10 ** 5, f"y_min={y_min}, ожидался 100K (не 10K) после клампа"
+    assert y_max == 10 ** 8, f"y_max={y_max}, ожидался 100M"
+    # 3 интервала = 4 тика: 100K, 1M, 10M, 100M.
+    assert ticks == [10 ** 5, 10 ** 6, 10 ** 7, 10 ** 8], f"ticks={ticks}"
+    # 5.22M (W-30 Чт) на 3-интервальной шкале 100K..100M: (6.717-5)/3 ≈ 0.572
+    # → 57.2% высоты. На 4-интервальной (без клампа) было бы 67.9%
+    # (визуально у 10M-тиков).
+    import math
+    frac = (math.log10(5_217_870) - math.log10(y_min)) / (math.log10(y_max) - math.log10(y_min))
+    assert abs(frac - 0.572) < 0.005, (
+        f"5.22M-бар должен быть ~57.2% высоты (не ~67.9% как без клампа), "
+        f"получил {frac:.3f}"
+    )
+
+
 def test_render_weekly_grid_linear_smoke() -> None:
     """Linear: HTML-грид с .week / .bar.history / .bar.future классами."""
     weeks = _make_weeks([
@@ -306,6 +343,7 @@ def main() -> int:
         test_y_ticks_for_log_all_none,
         test_y_ticks_for_log_all_zero,
         test_y_ticks_for_log_tight_range,
+        test_y_ticks_for_log_clamps_outlier_min,
         test_render_weekly_grid_linear_smoke,
         test_render_weekly_grid_log_smoke,
         test_render_weekly_grid_current_week_accent,

@@ -887,6 +887,13 @@ def _y_ticks_for_log(weeks: list[Week]) -> tuple[float, float, list[int]] | None
 
     Защита: если 0-day попадёт (data с 0-токенами, но не None) — он
     отрендерится как 2px floor bar в render-функции, см. _bar_geometry.
+
+    Outlier-кламп: если min-значение опускает шкалу ниже чем на 3 декады
+    от max (например, сегодняшний день = 30K при max=25M — диапазон 4 декады),
+    прижимаем y_min снизу к exp_max - 3. Без этого low-volume «хвост»
+    растягивает шкалу и поднимает все бары (5M-бар визуально «уезжает» к
+    10M-линии). Low-volume неделя целиком (всё ~50K) не клампится —
+    exp_max - exp_min = 1.
     """
     values = [v for w in weeks for v in w.days if v is not None and v > 0]
     if not values:
@@ -899,6 +906,11 @@ def _y_ticks_for_log(weeks: list[Week]) -> tuple[float, float, list[int]] | None
     exp_max = exp_max_raw + 1
     if exp_max <= exp_min:
         exp_max = exp_min + 1
+    # Кламп: ≤ 3 декады (4 тика: 100K, 1M, 10M, 100M). Иначе outlier 30K
+    # при max 25M даёт 4 декады (5 тиков: 10K..100M), 5M-бар поднимается
+    # с 57% до 68% высоты и зрительно пересекает 10M-тик.
+    if exp_max - exp_min > 3:
+        exp_min = exp_max - 3
     y_min = 10 ** exp_min
     y_max = 10 ** exp_max
     ticks = [10 ** e for e in range(exp_min, exp_max + 1)]
