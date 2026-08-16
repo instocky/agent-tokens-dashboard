@@ -9,7 +9,7 @@ HTML-рендер `_render_weekly_grid`. Запускается без pytest, �
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 # Чтобы import работал и при запуске из корня, и из tests/.
@@ -24,41 +24,47 @@ from build_dashboard import (  # noqa: E402
 
 
 # ---- compute_weekly_threshold (чистая логика) -----------------------------
+#
+# Контракт (TL, 2026-08-16):
+#   threshold = (cap − weekly_spent) / days_left
+#   weekly_spent — суммарный расход от Пн до сегодня (включительно).
+#   days_left — кол-во дней от сегодня до Вс включительно (Пн=7, Вс=1).
+#   Это «средний лимит на каждый из оставшихся дней», чтобы уложиться в cap.
 
 
 def test_threshold_monday_zero_spent() -> None:
-    """Пн, потрачено 0 → cap / 7 = 10 714 285 (floor)."""
-    # 75_000_000 / 7 = 10 714 285.71…, floor → 10 714 285
-    assert compute_weekly_threshold(75_000_000, 0, 7) == 10_714_285
+    """Пн, потрачено 0 → cap / 7 = 8 571 428 (floor)."""
+    # 60_000_000 / 7 = 8 571 428.57…, floor → 8 571 428
+    assert compute_weekly_threshold(60_000_000, 0, 7) == 8_571_428
 
 
 def test_threshold_monday_with_spent() -> None:
-    """Пн, потрачено 2 430 000 (как в скриншоте) → (75M − 2.43M) / 7 = 10 367 142.
+    """Пн, потрачено 2 430 000 → (60M − 2.43M) / 7 = 8 224 285.
 
-    72 570 000 / 7 = 10 367 142.85…, floor → 10 367 142
+    57 570 000 / 7 = 8 224 285.71…, floor → 8 224 285
     """
-    assert compute_weekly_threshold(75_000_000, 2_430_000, 7) == 10_367_142
+    assert compute_weekly_threshold(60_000_000, 2_430_000, 7) == 8_224_285
 
 
 def test_threshold_sunday() -> None:
-    """Вс, days_left=1 → cap − today_spent, без деления.
+    """Вс, days_left=1 → (cap − weekly_spent) / 1 = cap − weekly_spent.
 
-    (75 000 000 − 60 000 000) / 1 = 15 000 000
+    (60 000 000 − 10 000 000) / 1 = 50 000 000
     """
-    assert compute_weekly_threshold(75_000_000, 60_000_000, 1) == 15_000_000
+    assert compute_weekly_threshold(60_000_000, 10_000_000, 1) == 50_000_000
 
 
 def test_threshold_sunday_already_exhausted() -> None:
-    """Вс, потрачено 75M (вся капа) → threshold = 0."""
-    assert compute_weekly_threshold(75_000_000, 75_000_000, 1) == 0
+    """Вс, weekly_spent = cap → threshold = 0 (бюджет на оставшийся день = 0)."""
+    assert compute_weekly_threshold(60_000_000, 60_000_000, 1) == 0
 
 
 def test_threshold_exceeds_cap_returns_zero() -> None:
-    """today_spent > cap → threshold = 0 (cap полностью превышена).
+    """weekly_spent > cap → threshold = 0 (cap полностью превышена).
 
-    Это edge case: пользователь уже пробил 75M, дальше тратить нельзя.
+    Edge case: пользователь уже пробил 60M, дальше тратить нельзя.
     """
-    assert compute_weekly_threshold(75_000_000, 80_000_000, 4) == 0
+    assert compute_weekly_threshold(60_000_000, 70_000_000, 4) == 0
 
 
 def test_threshold_days_left_zero_returns_none() -> None:
@@ -67,13 +73,13 @@ def test_threshold_days_left_zero_returns_none() -> None:
     В реальной жизни такого не бывает (isoweekday ∈ [1..7] → days_left ∈ [1..7]),
     но контракт это явно фиксирует.
     """
-    assert compute_weekly_threshold(75_000_000, 1_000_000, 0) is None
-    assert compute_weekly_threshold(75_000_000, 1_000_000, -1) is None
+    assert compute_weekly_threshold(60_000_000, 1_000_000, 0) is None
+    assert compute_weekly_threshold(60_000_000, 1_000_000, -1) is None
 
 
 def test_threshold_wednesday_midweek() -> None:
-    """Ср, days_left=5, потрачено 5M → (75M − 5M) / 5 = 14M."""
-    assert compute_weekly_threshold(75_000_000, 5_000_000, 5) == 14_000_000
+    """Ср, days_left=5, weekly_spent=5M → (60M − 5M) / 5 = 11M."""
+    assert compute_weekly_threshold(60_000_000, 5_000_000, 5) == 11_000_000
 
 
 def test_threshold_floor_not_ceil() -> None:
@@ -99,13 +105,29 @@ def _make_weeks_for_render(
 ) -> list[Week]:
     """Собрать минимальный Week-список: одна прошлая + одна текущая.
 
-    В текущей неделе Пн=today_value, остальные None (не мешают тесту).
+    Текущая неделя привязана к реальному `date.today()` — её понедельник
+    вычисляется динамически, чтобы day_d == today_d для одного из дней
+    (этого требует условие рендера threshold-линии). Значение `today_value`
+    кладётся именно в ЭТОТ день, остальные 6 — None.
+
     is_current_index — какой Week помечен как current (0=первый, 1=второй).
     """
+    today_d = date.today()
+    current_monday = today_d - timedelta(days=today_d.weekday())
+    prev_monday = current_monday - timedelta(weeks=1)
+    current_iso_week = current_monday.isocalendar().week
+    prev_iso_week = prev_monday.isocalendar().week
+
+    days: list[int | None] = [None] * 7
+    days_split: list[tuple[int, int] | None] = [None] * 7
+    if today_value is not None:
+        days[today_d.weekday()] = today_value
+        days_split[today_d.weekday()] = (0, today_value)
+
     return [
         Week(  # прошлая
-            label="W-31",
-            monday=date(2026, 7, 27),
+            label=f"W-{prev_iso_week:02d}",
+            monday=prev_monday,
             days=[5_000_000, 6_000_000, 7_000_000, 4_000_000, 5_500_000, 3_000_000, 4_500_000],
             # days_split — total кладём в output (input=0); эти тесты
             # проверяют threshold/render логику, split не валидируют.
@@ -114,40 +136,39 @@ def _make_weeks_for_render(
             is_current=(is_current_index == 0),
         ),
         Week(  # текущая
-            label="W-32",
-            monday=date(2026, 8, 3),
-            days=[today_value, None, None, None, None, None, None],
-            # days_split параллелен days: None ⇔ None (нет данных).
-            days_split=[None if today_value is None else (0, today_value),
-                        None, None, None, None, None, None],
+            label=f"W-{current_iso_week:02d}",
+            monday=current_monday,
+            days=days,
+            days_split=days_split,
             is_current=(is_current_index == 1),
         ),
     ]
 
 
 def test_render_threshold_appears_on_current_day_only() -> None:
-    """Лимит threshold рисуется ТОЛЬКО в W-32 (current), Пн (today).
+    """Лимит threshold рисуется ТОЛЬКО в текущей неделе, на сегодняшнем дне.
 
-    В прошлой W-31 порога быть не должно ни на одном дне.
+    В прошлой неделе порога быть не должно ни на одном дне.
     """
-    # Пн W-32, потрачено 2.43M, days_left=7 → 10.37M
+    # today=Пн, weekly_spent=2.43M, days_left=7 → 8.22M
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142)
+    current_label = weeks[1].label
+    html = _render_weekly_grid(weeks, "linear", 60_000_000, weekly_threshold=8_224_285)
 
     # Threshold-блок присутствует
     assert 'class="threshold"' in html
-    # Подпись со значением (label — только число, "порог" живёт в легенде)
-    assert "10.37M" in html
+    # Подпись со значением (label — только число, "средний лимит" живёт в title)
+    assert "8.22M" in html
 
-    # В W-31 порога нет (count() == 1 — только в W-32)
-    w31_section = html.split('W-32')[0]
-    assert 'class="threshold"' not in w31_section, "threshold не должен быть в прошлых неделях"
+    # В прошлой неделе (всё, что до label текущей) порога нет
+    prev_section = html.split(current_label)[0]
+    assert 'class="threshold"' not in prev_section, "threshold не должен быть в прошлых неделях"
 
 
 def test_render_threshold_omitted_when_none() -> None:
     """weekly_threshold=None → threshold-блок не рендерится вообще."""
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=None)
+    html = _render_weekly_grid(weeks, "linear", 60_000_000, weekly_threshold=None)
     assert 'class="threshold"' not in html
     assert "порог" not in html
 
@@ -156,14 +177,14 @@ def test_render_threshold_omitted_when_today_is_none() -> None:
     """Если за сегодня ещё нет данных (today_value=None), но threshold всё равно
     передаётся — главное чтобы он не сломал рендер и попал на бар.
 
-    На практике main() передаст today_spent=0, не None, но проверим,
+    На практике main() передаст weekly_spent=0, не None, но проверим,
     что рендер устойчив к граничному входу (today=None → bar future, threshold
     внутри bar-cell всё равно отрендерится, потому что day_d == today_d).
     """
     weeks = _make_weeks_for_render(today_value=None, is_current_index=1)
     # Не падает, threshold-блок может быть (т.к. day_d == today_d всё равно верно),
     # но это редкий сценарий — главное, что не падает.
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_000_000)
+    html = _render_weekly_grid(weeks, "linear", 60_000_000, weekly_threshold=8_000_000)
     # bar.future (т.к. value is None), но .bar-cell всё равно есть
     assert 'class="bar-cell"' in html
 
@@ -174,7 +195,7 @@ def test_render_threshold_positioned_via_bottom_pct() -> None:
     Проверяем: bottom:N% присутствует в HTML (значит CSS-позиционирование сработает).
     """
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142)
+    html = _render_weekly_grid(weeks, "linear", 60_000_000, weekly_threshold=8_224_285)
     assert 'class="threshold" style="bottom:' in html
 
 
@@ -185,7 +206,7 @@ def test_render_bar_cell_wraps_each_bar() -> None:
     прямым flex-child .bars, после — обёрнут в .bar-cell для absolute-позиционирования.
     """
     weeks = _make_weeks_for_render(today_value=2_430_000, is_current_index=1)
-    html = _render_weekly_grid(weeks, "linear", 75_000_000, weekly_threshold=10_367_142)
+    html = _render_weekly_grid(weeks, "linear", 60_000_000, weekly_threshold=8_224_285)
     # 14 .bar-cell обёрток
     assert html.count('class="bar-cell"') == 14, (
         f"expected 14 bar-cells, got {html.count('class=\"bar-cell\"')}"
@@ -195,13 +216,13 @@ def test_render_bar_cell_wraps_each_bar() -> None:
 # ---- default constant sanity --------------------------------------------
 
 
-def test_weekly_cap_default_is_75m() -> None:
+def test_weekly_cap_default_is_60m() -> None:
     """Защита от случайной правки дефолта в build_dashboard.py.
 
-    Если кто-то поменяет 75_000_000 на другое число, тест напомнит —
+    Если кто-то поменяет 60_000_000 на другое число, тест напомнит —
     это бизнес-параметр, который согласован в PRD §6.5.
     """
-    assert WEEKLY_CAP_TOKENS == 75_000_000
+    assert WEEKLY_CAP_TOKENS == 60_000_000
 
 
 # ---- main ----------------------------------------------------------------
@@ -226,7 +247,7 @@ def main() -> int:
         test_render_threshold_positioned_via_bottom_pct,
         test_render_bar_cell_wraps_each_bar,
         # default
-        test_weekly_cap_default_is_75m,
+        test_weekly_cap_default_is_60m,
     ]
     passed = 0
     for t in tests:

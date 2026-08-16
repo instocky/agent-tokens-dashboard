@@ -451,22 +451,26 @@ def compute_weekly(
 
 
 def compute_weekly_threshold(
-    weekly_cap: int, today_spent: int, days_left: int
+    weekly_cap: int, weekly_spent: int, days_left: int
 ) -> int | None:
-    """«Потолок» расхода на сегодня (накопительно), чтобы уложиться в weekly_cap.
+    """Средний лимит расхода на каждый из оставшихся дней недели, чтобы уложиться
+    в `weekly_cap` (weekly budget per remaining day).
 
-    Формула:  threshold = max(0, (cap − today_spent) / days_left)  (с floor).
+    Формула:  threshold = max(0, (cap − weekly_spent) / days_left)  (с floor).
 
-    Семантика:
-      - threshold — это максимум, который можно потратить СЕГОДНЯ (с начала суток
-        до конца дня), чтобы при равномерном расходе на оставшиеся дни общая
-        сумма за неделю не превысила `weekly_cap`.
-      - Если сегодня уже потратил больше, чем threshold, — завтра формула
-        пересчитается (today_spent станет больше, days_left меньше → новый
-        порог). Это и есть «если превысил — на следующий день уровень
-        пересчитается».
+    Семантика (TL, 2026-08-16):
+      - threshold — это сколько токенов в СРЕДНЕМ можно потратить за каждый
+        из оставшихся дней недели (включая сегодня), чтобы общий расход за
+        неделю не превысил `weekly_cap`. Пн в начале дня → cap/7 (= 60M/7 ≈
+        8.57M); Вт, после Пн-понедельника → (60M − spent_Пн) / 6; Вс → (60M −
+        spent_Пн..Сб) / 1.
+      - weekly_spent — суммарный расход от понедельника текущей недели до
+        СЕГОДНЯ (включительно). НЕ только за сегодня.
       - days_left включает сегодня:  Пн=7, Вт=6, …, Вс=1. Считается как
         `8 − isoweekday(today)`.
+      - «Если превысил порог сегодня» НЕ обрабатывается: формула честно
+        покажет, что на оставшиеся дни осталось меньше (например (60M − 20M) /
+        5 = 8M — анти-стимул тратить ещё больше, чтобы не загнать бюджет в минус).
 
     Возвращает:
       - int ≥ 0 — сам threshold (clamped в 0 снизу для консервативности).
@@ -479,9 +483,9 @@ def compute_weekly_threshold(
     """
     if days_left <= 0:
         return None
-    remaining = weekly_cap - today_spent
+    remaining = weekly_cap - weekly_spent
     if remaining <= 0:
-        # Вся капа уже исчерпана (или превышена) — сегодня больше тратить не надо.
+        # Вся капа уже исчерпана (или превышена) — на оставшиеся дни бюджета нет.
         return 0
     # floor вниз: лучше показать чуть заниженный порог, чем подтолкнуть к
     # превышению. 10.71M → 10M, не 11M.
@@ -1125,7 +1129,8 @@ def _render_weekly_grid(
                 thr_label = f"{fmt_tokens(weekly_threshold)}"
                 cell_inner += (
                     f'<div class="threshold" style="bottom:{thr_pct:.1f}%" '
-                    f'title="Потолок сегодня: {fmt_int(weekly_threshold)} токенов '
+                    f'title="Средний лимит на каждый из оставшихся дней: '
+                    f'{fmt_int(weekly_threshold)} токенов '
                     f'(weekly cap {fmt_int(WEEKLY_CAP_TOKENS)})">'
                     f'<span class="threshold-label">{thr_label}</span>'
                     f'</div>'
@@ -1486,7 +1491,8 @@ def _render_hero_pills(
       (имя ветки vs имя папки), 2026-08-05 добавлены оба через разделитель •.
       Если session_title=None — рендерится только project (старый fallback).
     - day (справа): today_tokens / weekly_threshold.
-      Знаменатель — рассчитанный потолок на сегодня (см. compute_weekly_threshold).
+      Знаменатель — средний лимит на каждый из оставшихся дней недели
+      (см. compute_weekly_threshold: (cap − spent_Пн..сегодня) / days_left).
 
     Pill с пустым знаменателем (нет данных за день / threshold=None / current_session
     нет) рендерится как "—" со neutral-цветом, чтобы layout не «скакал» между билдами.
@@ -1506,7 +1512,7 @@ def _render_hero_pills(
         actual_paren=None,
         cap=weekly_threshold,
         cap_paren=None,
-        title="Потрачено сегодня / рассчитанный потолок дня (weekly cap / days_left)",
+        title="Потрачено сегодня / средний лимит на каждый из оставшихся дней",
     )
     return f'<div class="hero-pills">{combined_pill}{day_pill}</div>'
 
@@ -2468,21 +2474,23 @@ def main() -> int:
     y_max = _y_max_for(weeks)
     log_info = _y_ticks_for_log(weeks)
 
-    # Порог расхода на сегодня (weekly cap threshold). Считаем только если
-    # текущая неделя действительно последняя в окне (она всегда последняя по
-    # логике compute_weekly) и для today есть ненулевая запись. Если записи
-    # ещё нет — today_spent=0, threshold=cap/days_left (нормальный кейс для
-    # самого начала дня).
+    # Порог расхода на оставшиеся дни недели (weekly budget per remaining day).
+    # weekly_spent — суммарный расход от Пн до сегодня (включительно), не только
+    # за сегодня. days_left включает сегодня: Пн=7, Вс=1. В начале Пн (ничего
+    # не потрачено) → cap/7; в конце Вс → (cap − spent_вся_неделя) / 1.
     current_week = weeks[-1]
     today_idx = now_msk.weekday()  # 0=Пн..6=Вс
-    today_spent = current_week.days[today_idx] or 0
+    # None-ы (будущие дни за пределами сегодня) трактуем как 0: они в days[0..today_idx]
+    # не встречаются, но защищаемся на всякий случай (если бы today_idx прыгнул
+    # за пределы массива).
+    weekly_spent = sum(v or 0 for v in current_week.days[: today_idx + 1])
     days_left = 8 - now_msk.isoweekday()  # Пн=7, Вс=1
     weekly_threshold = compute_weekly_threshold(
-        WEEKLY_CAP_TOKENS, today_spent, days_left
+        WEEKLY_CAP_TOKENS, weekly_spent, days_left
     )
     log(
         f"[build] weekly_cap={WEEKLY_CAP_TOKENS}  "
-        f"today_spent={today_spent}  days_left={days_left}  "
+        f"weekly_spent={weekly_spent}  days_left={days_left}  "
         f"threshold={weekly_threshold}"
     )
 
