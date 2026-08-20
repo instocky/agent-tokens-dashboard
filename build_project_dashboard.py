@@ -653,10 +653,17 @@ def render_project_detail(
     Структура (всё внутри одной <td colspan="6">):
       .detail-inner
         .detail-header         "N дней · день DD MMM (T / $C)"
-        .day-grid              GitHub-style heatmap (7 строк Пн..Вс × N недель)
-          .day-grid__corner    пустой (1×1)
-          .day-grid__col-head  month label (один на смену месяца)
-          .day-grid__row-head  Пн / Ср / Пт (только эти 3, по гайдлайну)
+        .day-grid              транспонированный 4w-heatmap (4 строки недель
+                               × 7 столбцов Пн..Вс). Шапка СНИЗУ (row 5)
+                               — дни недели; стиль 1-в-1 как .hour-label
+                               в 24h (11px, var(--muted), uppercase).
+                               Ячейки 18px (фиксировано). Грид прижат
+                               к низу родительской строки (align-self:
+                               end) + padding-bottom 10px (mimics
+                               .chart-shell--24h) — нижняя граница дня
+                               = нижняя граница 24h, лейблы ПН ВТ
+                               стартуют на y=103 как .hour-label.
+          .day-grid__col-head  ПН / ВТ / СР / ЧТ / ПТ / СБ / ВС (row 5)
           .day-grid__cell      одна ячейка = один день, 4 уровня интенсивности
         .day-separator         "DD MMM · total · X.XM" (про выбранный день)
         .hour-chart            сюда JS подменяет innerHTML при клике
@@ -672,13 +679,14 @@ def render_project_detail(
     Клик по .day-grid__cell: JS читает .day-hour-map, обновляет .hour-chart и
     .day-separator, переключает класс .day-grid__cell--selected на ячейках.
 
-    Окно грида: 1-е число предыдущего месяца .. today MSK (inclusive), обёрнутое
-    в полные недели Пн..Вск. Внутри окна — 4 уровня зелёного (25/50/75/100% от
-    max_value за проект), пустые дни в окне — pale, ячейки вне окна (padding
-    + будущие дни текущей недели) — transparent и некликабельные. Сегодня —
-    точка в углу, выбранный день — белая обводка. Лог-шкала (use_log) тут
-    НЕ используется: bucket'и работают только в линейной шкале.
-    1-day проект: грид рисуется как обычно (1 цветная ячейка в окне ~50),
+    Окно грида: 4 ISO-недели (Пн..Вс), заканчивающиеся неделей выбранного дня
+    (вариант А — окно «плавает» вместе с active day в 24h). Все 28 ячеек
+    внутри окна → out-of-window больше не рендерится, padding не нужен.
+    Внутри окна — 4 уровня зелёного (25/50/75/100% от max_value за проект),
+    пустые дни — pale, сегодня — точка в углу (если попадает в окно),
+    выбранный день — белая обводка. Лог-шкала (use_log) тут НЕ используется:
+    bucket'и работают только в линейной шкале.
+    1-day проект: грид рисуется как обычно (1 цветная ячейка в окне из 28),
     24h рендерится сразу.
     """
     days_sorted: list[date] = sorted(ts.days.keys())
@@ -744,54 +752,42 @@ def render_project_detail(
         f'</div>'
     )
 
-    # === Day grid (GitHub-style heatmap) ===
-    # Окно: предыдущий месяц (с 1-го числа) + текущий (по today MSK).
-    # Сетка 7 строк (Пн..Вс) × N колонок (недель), с padding-ячейками за
-    # пределами окна (начало предыдущей недели + конец текущей, до Вск).
-    # 4 уровня интенсивности зелёного для дней с данными, pale для пустых,
-    # transparent для out-of-window. Сегодня — точка в углу, выбранный
-    # день — белая обводка.
+    # === Day grid (4-week transposed heatmap) ===
+    # Окно: 4 ISO-недели (Пн..Вс), заканчивающиеся неделей выбранного дня
+    # (вариант А — «плавает» вместе с active day в 24h). Все 28 ячеек в
+    # окне → padding/out-of-window не нужны, отсюда — стабильный, всегда
+    # 4×7-формат вне зависимости от N дней в проекте.
+    # Сетка 4 строки (недели) × 7 столбцов (Пн..Вс), шапка сверху — дни
+    # недели. 4 уровня интенсивности зелёного для дней с данными, pale
+    # для пустых. Сегодня — точка в углу (если попадает в окно), выбранный
+    # день — белая обводка. Лог-шкала (use_log) тут НЕ используется.
     today_date = now_msk.date()
-    first_of_this_month = date(today_date.year, today_date.month, 1)
-    prev_month_last_day = first_of_this_month - timedelta(days=1)
-    prev_month_start = date(prev_month_last_day.year, prev_month_last_day.month, 1)
-    window_start = prev_month_start  # всегда 1-е число предыдущего месяца
-    window_end = today_date
-    # Грид-границы: понедельник недели с window_start .. воскресенье недели с window_end.
-    grid_start = window_start - timedelta(days=window_start.weekday())
-    grid_end = window_end + timedelta(days=(6 - window_end.weekday()))
-    n_weeks = (grid_end - grid_start).days // 7 + 1
+    n_weeks = 4
+    # Неделя выбранного дня: Пн..Вс. Окно расширяем на 4 недели назад,
+    # чтобы выбранный день оказался в нижней (самой свежей) строке.
+    week_monday = selected_day - timedelta(days=selected_day.weekday())
+    grid_start = week_monday - timedelta(weeks=n_weeks - 1)  # Пн 3 недели назад
+    grid_end_exclusive = week_monday + timedelta(weeks=1)    # Пн следующей недели
+    window_start = grid_start
+    window_end = grid_end_exclusive - timedelta(days=1)      # Вс недели selected_day
+    # Все ячейки внутри окна — out-of-window не используется, оставлено в
+    # CSS как страховка (если кто-то добавит padding-режим обратно).
 
-    # Month labels: в колонке показываем месяц первого понедельника.
-    # Если в колонке происходит смена месяца между Пн и Вск — берём месяц Пн
-    # (это совпадает с GitHub: метка месяца "привязана" к колонке).
-    month_label_cells: list[str] = []
-    prev_month_seen: int | None = None
-    for col in range(n_weeks):
-        col_first = grid_start + timedelta(days=col * 7)
-        m = col_first.month
-        if m != prev_month_seen:
-            month_label_cells.append(
-                f'<div class="day-grid__col-head" '
-                f'style="grid-column: {col + 2}">'
-                f'{_MONTHS_RU_SHORT[m - 1].upper()}'
-                f'</div>'
-            )
-            prev_month_seen = m
-
-    # DOW labels: только Пн / Ср / Пт (по гайдлайну GitHub).
+    # DOW labels: Пн..Вс в row 5 (нижняя строка, как .hour-label в 24h).
+    # Полный набор из 7 подписей (раньше показывали только Пн/Ср/Пт —
+    # здесь шапка короткая, помещается целиком без потерь для
+    # скан-ридинга). uppercase ставит CSS text-transform.
+    dow_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     dow_label_cells: list[str] = []
-    for row_idx in range(7):
-        label = {0: "Пн", 2: "Ср", 4: "Пт"}.get(row_idx, "")
-        if label:
-            dow_label_cells.append(
-                f'<div class="day-grid__row-head" '
-                f'style="grid-row: {row_idx + 2}">'
-                f'{label}'
-                f'</div>'
-            )
+    for col_idx in range(7):
+        dow_label_cells.append(
+            f'<div class="day-grid__col-head" '
+            f'style="grid-column: {col_idx + 1}; grid-row: 5;">'
+            f'{dow_short[col_idx]}'
+            f'</div>'
+        )
 
-    # Day cells: 7 × N, intensity bucket относительно max_value.
+    # Day cells: 4 × 7, intensity bucket относительно max_value.
     # log-шкала (use_log) для грида НЕ используется — в GitHub-style
     # bucket'и работают только в линейной шкале (log растягивает малые
     # значения и съедает визуальную разницу между бакетами).
@@ -808,36 +804,30 @@ def render_project_detail(
         return 4
 
     day_cells: list[str] = []
-    for col in range(n_weeks):
-        for row in range(7):
-            day = grid_start + timedelta(days=col * 7 + row)
-            in_window = (window_start <= day <= window_end)
+    for row in range(n_weeks):       # row 0 = самая старая неделя; row 3 = неделя selected_day
+        for col in range(7):         # col 0 = Пн, col 6 = Вс
+            day = grid_start + timedelta(days=row * 7 + col)
+            # Все 28 ячеек в окне (4 полных недели); out-of-window не
+            # рендерится — padding не нужен. Класс .day-grid__cell--out и
+            # CSS-правило оставлены на случай будущего расширения окна.
+            v = ts.days.get(day, 0)
+            in_v, out_v = ts.days_split.get(day, (0, 0))
+            level = _intensity_level(v, max_value)
             is_today = (day == today_date)
             is_selected = (day == selected_day)
-            if in_window:
-                v = ts.days.get(day, 0)
-                in_v, out_v = ts.days_split.get(day, (0, 0))
-            else:
-                v, in_v, out_v = 0, 0, 0
-            level = _intensity_level(v, max_value) if in_window else 0
 
             cls = "day-grid__cell"
-            if not in_window:
-                cls += " day-grid__cell--out"
-            elif level > 0:
+            if level > 0:
                 cls += f" day-grid__cell--intensity-{level}"
             # иначе — default (pale empty, в CSS rgba(255,255,255,0.06))
-            if is_today and in_window:
+            if is_today:
                 cls += " day-grid__cell--today"
             if is_selected:
                 cls += " day-grid__cell--selected"
 
             # Tooltip: split-разбивка (↑input ↓output), как было в .day-bar
-            # (теперь — в .day-grid__cell, контракт стрелок сохранён).
-            if not in_window:
-                tip = format_day_short(day)
-                clickable = False
-            elif v > 0:
+            # и в предыдущей GitHub-style версии (контракт стрелок сохранён).
+            if v > 0:
                 tip = (
                     f"{format_day_short(day)} · "
                     f"↑{in_v:,} · ↓{out_v:,} "
@@ -852,7 +842,7 @@ def render_project_detail(
                 f'class="{cls}"',
                 f'data-day="{format_day_iso(day)}"',
                 f'data-tokens="{v}"',
-                f'style="grid-row: {row + 2}; grid-column: {col + 2};"',
+                f'style="grid-row: {row + 1}; grid-column: {col + 1};"',
                 f'title="{html.escape(tip)}"',
             ]
             if clickable:
@@ -862,9 +852,7 @@ def render_project_detail(
 
     day_chart = (
         f'<div class="day-grid" '
-        f'style="grid-template-columns: 22px repeat({n_weeks}, 1fr);">'
-        f'<div class="day-grid__corner" style="grid-row: 1; grid-column: 1;"></div>'
-        f'{"".join(month_label_cells)}'
+        f'style="grid-template-columns: repeat(7, 1fr);">'
         f'{"".join(dow_label_cells)}'
         f'{"".join(day_cells)}'
         f'</div>'
@@ -1357,11 +1345,12 @@ def render_html(
       /* ADR-0008: двухстрочный grid. Header занимает верхний ряд
          на всю ширину; day-grid и hour-chart лежат в нижнем ряду
          (фиксированная ширина грида слева / остаток справа).
-         Фиксированная ширина слева = 180px потому что day-grid 7×N
-         при N≈7-8 недель выходит в 22px (метки Пн/Ср/Пт) + 7×~16px
-         (ячейки) + 7×3px (gap) ≈ 162px, плюс 18px на «воздух». */
+         Левая колонка = minmax(200px, 240px) потому что транспонированный
+         day-grid 4w×7d при 7 ячейках по ~26px = ~182px, плюс 3×6px gap
+         (18px) и пара 18px «воздуха» → 218px. minmax даёт гибкость на
+         узких экранах, при этом не даёт колонке схлопнуться. */
       display: grid;
-      grid-template-columns: 180px 1fr;
+      grid-template-columns: minmax(200px, 240px) 1fr;
       grid-template-rows: auto 1fr;
       column-gap: 18px;
       row-gap: 12px;
@@ -1377,7 +1366,14 @@ def render_html(
       grid-row: 2;
       min-width: 0;
       margin-bottom: 0;
-      align-self: start;  /* грид не растягивается на всю высоту 24h */
+      /* align-self: end — грид прижат к низу родительской строки
+         (124px у 24h), нижняя граница дня = нижняя граница часов.
+         TL 2026-08-20 (доп. правка): «нижнюю границу ДНИ в ровень
+         с часами, ПН ВТ на одной линии с 00 01». Добиваемся через
+         padding-bottom: 10px на гриде (mimics .chart-shell--24h
+         padding-bottom), который поднимает ряд с лейблом ровно на
+         10px, и тот стартует на y=103 — как .hour-label. */
+      align-self: end;
     }}
     .detail-inner--side-by-side .hour-chart {{
       grid-column: 2;
@@ -1404,44 +1400,44 @@ def render_html(
       opacity: 0.6;
     }}
 
-    /* === Day grid (GitHub-style heatmap) === */
-    /* 7 строк (Пн..Вс) × N недель. Шапка сверху (месяц), шапка слева
-       (Пн/Ср/Пт), в углу — пустой corner. Ячейка = 1 день; 4 уровня
-       интенсивности зелёного, pale для пустого, transparent для
-       out-of-window (padding + будущие дни текущей недели). */
+    /* === Day grid (4-week transposed heatmap) === */
+    /* Транспонированный 4w-heatmap: 4 строки (недели) × 7 столбцов
+       (Пн..Вс). Шапка СНИЗУ — дни недели, как .hour-label в 24h
+       (font-size/цвет совпадают с .hour-label: 11px, var(--muted),
+       uppercase, text-align center). Все 28 ячеек в окне,
+       out-of-window не используется. Ячейка = 1 день; 4 уровня
+       интенсивности зелёного, pale для пустого. Высота ячеек
+       18px (TL 2026-08-20, «прямоугольник дня чуть приплюснется»).
+       padding-bottom: 10px на гриде mimics .chart-shell--24h —
+       поднимает лейбл дня на y=103, как .hour-label в 24h. */
     .day-grid {{
       display: grid;
-      grid-template-rows: 14px repeat(7, 16px);
+      grid-template-rows: repeat(4, 18px) 14px;
+      grid-template-columns: repeat(7, 1fr);
       gap: 3px;
       font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
-      font-size: 9px;
+      font-size: 11px;
       color: var(--muted);
       width: 100%;
+      padding-bottom: 10px;
     }}
-    .day-grid__corner {{ /* пустой, в layout grid (1,1) */ }}
+    .day-grid__corner {{ display: none; /* больше не рендерится */ }}
     .day-grid__col-head {{
+      /* Шапка с именами дней недели (ПН..ВС), row 5 (нижняя).
+         Шрифт = .hour-label: 11px, var(--muted), text-align center,
+         line-height = высоте строки (14px). */
+      flex: none;
+      text-align: center;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-size: 9px;
+      color: var(--muted);
+      font-size: 11px;
       line-height: 14px;
-      color: var(--muted);
-      opacity: 0.85;
-      /* Позиция задаётся inline через style="grid-column: …". */
+      /* Позиция задаётся inline через style="grid-column: …; grid-row: …". */
     }}
-    .day-grid__row-head {{
-      font-size: 9px;
-      letter-spacing: 0.04em;
-      line-height: 16px;
-      text-align: right;
-      padding-right: 6px;
-      align-self: center;
-      color: var(--muted);
-      opacity: 0.7;
-      /* Позиция задаётся inline через style="grid-row: …". */
-    }}
+    .day-grid__row-head {{ display: none; /* больше не рендерится */ }}
     .day-grid__cell {{
       width: 100%;
-      height: 16px;
+      height: 18px;
       background: rgba(255, 255, 255, 0.06);  /* default = empty/pale в окне */
       border-radius: 2px;
       position: relative;
@@ -1481,8 +1477,9 @@ def render_html(
       outline-offset: -1px;
       z-index: 1;
     }}
-    /* Out-of-window: padding начала (Пн..1-е число прошлого месяца) +
-       конца текущей недели (после today). Transparent + некликабельно. */
+    /* Out-of-window: сейчас не используется (4w-окно всегда покрывает
+       все 28 ячеек). Правило оставлено на случай будущего расширения
+       окна (например, 6+ недель с padding по краям). */
     .day-grid__cell--out {{
       background: transparent;
       pointer-events: none;

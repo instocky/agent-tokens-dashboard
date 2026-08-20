@@ -266,3 +266,55 @@ GitHub-contributions-style heatmap:
   прятался для 1-day).
 - `data-tokens="0"` ячейки не имеют `role="button"`, не реагируют
   на hover/click; `cursor: default`.
+
+## 13. Follow-up: day-grid transpose (4w×7d) — 2026-08-20
+
+Замечание TL, 2026-08-20: высота дневного грида не совпадала с
+почасовым — грид торчал ниже (`align-self: start` + 7 строк × 16px
++ 3px gap × 6 + 14px header ≈ 144px против 124px у 24h). TL
+попросил транспонировать и оставить 4 недели.
+
+**Изменения (поверх §12):**
+
+- Транспонировано: 4 строки (недели) × 7 столбцов (Пн..Вс).
+  Шапка **снизу** (row 5), как `.hour-label` в 24h.
+- Окно: 4 ISO-недели (Пн..Вс), заканчивающиеся неделей выбранного
+  дня (вариант А — «плавает» вместе с active day в 24h). Все 28
+  ячеек внутри окна → out-of-window не рендерится, padding не нужен.
+- `.day-grid` `grid-template-rows: repeat(4, 18px) 14px` +
+  `padding-bottom: 10px`. Ячейки 18px (TL 2026-08-20: «прямоугольник
+  дня чуть приплюснется»). Грид прижат к низу родительской
+  строки через `align-self: end` (нижняя граница дня = нижняя
+  граница 24h), `padding-bottom: 10px` mimics `.chart-shell--24h`
+  → лейбл ПН/ВТ стартует на y=103, как `.hour-label` (там лейбл
+  в bottom hour-cell, который стартует на y=103 относительно
+  row 2 родителя).
+- Шрифт/цвет `.day-grid__col-head` — 1-в-1 как `.hour-label` (11px,
+  var(--muted), uppercase, text-align center, line-height 14px).
+- `.detail-inner--side-by-side` columns: `minmax(200px, 240px) 1fr`
+  (раньше `180px 1fr`).
+- `.day-grid__corner` и `.day-grid__row-head` — `display: none`
+  (больше не рендерится), правила оставлены на случай обратного
+  перехода.
+
+**Клик-контракт без изменений:**
+
+- `data-day`, `data-tokens`, `role="button"`, `aria-label`, `title`
+  сохраняются → `onDayCellClick` в JS работает без правок.
+- Tooltip формат: `DD MMM · ↑I · ↓O (Σ T) · NN% · клик → 24h` /
+  `DD MMM · 0 · 0%` (для пустых) — без изменений.
+
+**Acceptance дополнение к §12:**
+
+- 4w×7d грид выровнен по **нижнему краю** с 24h (`align-self: end`,
+  `padding-bottom: 10px`); лейблы `ПН..ВС` стартуют на y=103,
+  как `.hour-label`.
+- Ячейки 18px (compact heatmap, «чуть приплюснутый» по сравнению
+  с прежним 20px). Высота 4 ячеек + лейбл + 10px padding =
+  105px vs 124px у 24h — грид короче, но визуально выровнен
+  по нижнему краю.
+- 1-day проект: 1 цветная ячейка среди 27 pale, выбранная = сегодня
+  = пик, 24h широкий.
+- 28-day проект: ~10-12 цветных ячеек в окне, остальные pale.
+- `data-day` присутствует у всех 28 ячеек (раньше у части был
+  пропущен из-за out-of-window).
