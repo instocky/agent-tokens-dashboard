@@ -815,12 +815,26 @@ def render_project_detail(
             level = _intensity_level(v, max_value)
             is_today = (day == today_date)
             is_selected = (day == selected_day)
+            # Ненаступившие дни в окне (после today MSK). На 4-недельном
+            # окне, заканчивающемся неделей selected_day, это последние
+            # 0..N ячеек нижней строки (от selected_day+1 до воскресенья).
+            # Рендерятся, но визуально де-эмфазируются (CSS .day-grid__cell
+            # --future: background 0.02 vs 0.06 у пустых прошлых, плюс
+            # pointer-events: none). TL 2026-08-20: «сделать светлее на
+            # 7 из 10» — минус 70% видимости от текущего empty-стиля.
+            is_future = (day > today_date)
 
             cls = "day-grid__cell"
-            if level > 0:
+            if is_future:
+                # Future идёт ПЕРЕД intensity, чтобы перебить фоновый
+                # класс (если когда-нибудь у future появятся данные).
+                cls += " day-grid__cell--future"
+            elif level > 0:
                 cls += f" day-grid__cell--intensity-{level}"
             # иначе — default (pale empty, в CSS rgba(255,255,255,0.06))
-            if is_today:
+            if is_today and not is_future:
+                # today всегда «настоящее», не future, но формальная
+                # проверка на всякий случай (today не > today).
                 cls += " day-grid__cell--today"
             if is_selected:
                 cls += " day-grid__cell--selected"
@@ -1482,6 +1496,19 @@ def render_html(
        окна (например, 6+ недель с padding по краям). */
     .day-grid__cell--out {{
       background: transparent;
+      pointer-events: none;
+    }}
+    /* Future-дни (после today MSK, но в 4w-окне). TL 2026-08-20:
+       «сделать светлее на 7 из 10» — 0.02 визуально неотличимо от
+       0.06 на тёмном фоне, TL скорректировал. Делаем как в 24h
+       (.bar-24h.future): прозрачный фон + dashed-рамка 1px с низкой
+       opacity. Это и «легче» (фон пустой, только рамка), и явный
+       маркер «будущее» — пользователь сразу видит границу между
+       прошлым (заполненные pale-ячейки) и будущим (dashed-контуры).
+       Некликабельны (v=0 в любом случае, страховка). */
+    .day-grid__cell--future {{
+      background: transparent;
+      border: 1px dashed rgba(255, 255, 255, 0.15);
       pointer-events: none;
     }}
 
