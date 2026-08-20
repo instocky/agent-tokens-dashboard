@@ -1102,7 +1102,6 @@ def render_html(
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="refresh" content="60" />
   <title>Project Dashboard — {now_msk.strftime('%Y-%m-%d %H:%M')} MSK</title>
   <style>
     :root {{
@@ -1207,6 +1206,21 @@ def render_html(
     tbody tr.active td:first-child {{
       box-shadow: inset 2px 0 0 var(--accent);
     }}
+    /* ADR-0008: вся строка кликабельна (не только chevron).
+       cursor: pointer сигнализирует это, не трогая текст/cells. */
+    tbody tr[data-project] {{ cursor: pointer; }}
+    tbody tr[data-project] td {{ cursor: pointer; }}
+    /* ADR-0008: expanded row получает subtle background, чтобы
+       chart panel (теперь transparent на .detail-cell) визуально
+       "втёк" в строку как продолжение, а не читался отдельной
+       секцией. Тот же оттенок, что был у --panel-2, но применён
+       к строке — панель наследует через прозрачный фон. */
+    tbody tr.expanded td {{
+      background: var(--panel-2);
+    }}
+    tbody tr.expanded td:first-child {{
+      box-shadow: inset 2px 0 0 var(--accent);
+    }}
     .badge {{
       display: inline-block;
       margin-left: 8px;
@@ -1254,12 +1268,50 @@ def render_html(
        специфичности, ряд остаётся видимым. Явное правило для скрытия. */
     tbody tr.detail-row[hidden] {{ display: none; }}
     tbody tr.detail-row > td.detail-cell {{
+      /* ADR-0008: chart panel должен читаться как продолжение строки,
+         а не отдельная секция "внизу таблицы". Убираем --panel-2 фон
+         и явный border-bottom (он уже есть на tbody td) — панель
+         визуально сливается с телом таблицы, как в mockup. */
       padding: 0;
-      background: var(--panel-2);
-      border-bottom: 1px solid var(--line);
+      background: transparent;
     }}
     .detail-inner {{
-      padding: 18px 22px 22px;
+      /* ADR-0008: per-row expandable activity block.
+         Default = block flow (stacked, как было, N>7 дней).
+         .detail-inner--side-by-side modifier ставит JS, если
+         data-n-days на .detail-header ≤ 7. */
+      padding: 14px 22px 18px;
+    }}
+    .detail-inner--side-by-side {{
+      /* ADR-0008: двухстрочный grid. Header занимает верхний ряд
+         на всю ширину; day-chart и hour-chart лежат в нижнем ряду
+         (30% / 70%) прямо под ним. */
+      display: grid;
+      grid-template-columns: 30% 1fr;
+      grid-template-rows: auto 1fr;
+      column-gap: 18px;
+      row-gap: 12px;
+      align-items: stretch;
+    }}
+    .detail-inner--side-by-side .detail-header {{
+      grid-column: 1 / -1;
+      grid-row: 1;
+      margin-bottom: 0;
+    }}
+    .detail-inner--side-by-side .day-chart {{
+      grid-column: 1;
+      grid-row: 2;
+      min-width: 0;
+      margin-bottom: 0;
+    }}
+    .detail-inner--side-by-side .hour-chart {{
+      grid-column: 2;
+      grid-row: 2;
+      min-width: 0;
+    }}
+    .detail-inner--side-by-side .day-separator,
+    .detail-inner--side-by-side .day-caption {{
+      display: none;
     }}
     .detail-header {{
       font-size: 11px;
@@ -1546,13 +1598,28 @@ def render_html(
       function sortBy(col, dir) {{
         var tbody = document.querySelector("table tbody");
         if (!tbody) return;
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+        // ADR-0008: исключаем tr.detail-row из сортировки.
+        // У detail-row нет td[data-col], sortValueFor возвращает "" —
+        // стабильная сортировка desc сваливает их в конец таблицы,
+        // и chart panel оказывается "под таблицей" вместо "под строкой".
+        // Сортируем ТОЛЬКО data rows, потом вставляем каждый detail-row
+        // сразу после своего data row (по data-project ↔ id="detail-…").
+        var dataRows = Array.prototype.slice.call(
+          tbody.querySelectorAll("tr:not(.detail-row)")
+        );
         var mul = dir === "desc" ? -1 : 1;
-        rows.sort(function (a, b) {{ return compareRows(a, b, col) * mul; }});
-        // appendChild перемещает существующий узел, не клонирует — порядок
-        // в DOM меняется, ссылки на <tr> остаются валидными.
-        for (var i = 0; i < rows.length; i++) {{
-          tbody.appendChild(rows[i]);
+        dataRows.sort(function (a, b) {{ return compareRows(a, b, col) * mul; }});
+        for (var i = 0; i < dataRows.length; i++) {{
+          tbody.appendChild(dataRows[i]);
+          var project = dataRows[i].getAttribute("data-project");
+          if (!project) continue;
+          var detail = document.getElementById("detail-" + project);
+          // Вставляем detail-row сразу после data row.
+          // insertBefore(node, null) → appendChild, поэтому detail
+          // окажется следующим сиблингом.
+          if (detail && detail.parentNode === tbody) {{
+            tbody.insertBefore(detail, dataRows[i].nextSibling);
+          }}
         }}
       }}
 
@@ -1892,13 +1959,40 @@ def render_html(
         var detail = document.getElementById(detailId);
         if (!detail) return;
         ev.stopPropagation();
+        // Находим data-row (предыдущий <tr>) — на него повесим
+        // .expanded, чтобы CSS дал row background, и chart panel
+        // (теперь transparent) визуально "втёк" в строку.
+        var dataRow = detail.previousElementSibling;
         var expanded = chev.getAttribute("aria-expanded") === "true";
         if (expanded) {{
           detail.setAttribute("hidden", "");
           chev.setAttribute("aria-expanded", "false");
+          if (dataRow && dataRow.classList) dataRow.classList.remove("expanded");
         }} else {{
+          // ADR-0008: accordion — при открытии одного графика все
+          // остальные раскрытые сворачиваем. Selector
+          // tr.detail-row:not([hidden]) ловит только видимые; current
+          // detail ещё hidden (мы только собираемся его раскрыть), так
+          // что его мы не трогаем.
+          var openDetails = document.querySelectorAll(
+            "tr.detail-row:not([hidden])"
+          );
+          for (var oi = 0; oi < openDetails.length; oi++) {{
+            var od = openDetails[oi];
+            if (od === detail) continue;
+            od.setAttribute("hidden", "");
+            var otherChev = document.querySelector(
+              ".chevron[aria-controls='" + od.id + "']"
+            );
+            if (otherChev) otherChev.setAttribute("aria-expanded", "false");
+            var otherDataRow = od.previousElementSibling;
+            if (otherDataRow && otherDataRow.classList) {{
+              otherDataRow.classList.remove("expanded");
+            }}
+          }}
           detail.removeAttribute("hidden");
           chev.setAttribute("aria-expanded", "true");
+          if (dataRow && dataRow.classList) dataRow.classList.add("expanded");
         }}
       }}
 
@@ -1928,6 +2022,25 @@ def render_html(
       }}
 
       function init() {{
+        // ADR-0008: layout switch по data-n-days.
+        // N ≤ 7 → side-by-side (30% days / 70% hours), иначе stacked.
+        // Один проход на load; meta-refresh пересоберёт DOM и init() вызовется
+        // снова — класс восстановится. Persistent state не нужен: layout
+        // детерминирован из data-n-days, а не из user choice.
+        var SIDE_BY_SIDE_MAX = 7;
+        var detailRows = document.querySelectorAll("tr.detail-row");
+        for (var dri = 0; dri < detailRows.length; dri++) {{
+          var hdr = detailRows[dri].querySelector(".detail-header");
+          var inner = detailRows[dri].querySelector(".detail-inner");
+          if (!hdr || !inner) continue;
+          var n = parseInt(hdr.getAttribute("data-n-days") || "0", 10);
+          if (n > 0 && n <= SIDE_BY_SIDE_MAX) {{
+            inner.classList.add("detail-inner--side-by-side");
+          }} else {{
+            inner.classList.add("detail-inner--stacked");
+          }}
+        }}
+
         // Event delegation на <tbody>: один handler на parent вместо
         // N штук на каждом шевроне/баре. Устойчиво к meta-refresh и к
         // случаям, когда часть DOM пересоздаётся.
@@ -1952,6 +2065,19 @@ def render_html(
             onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
             return;
           }}
+          // Whole-row click: ADR-0008 UX — клик по любой ячейке data-row
+          // (не по day-bar в detail-row) триггерит expand/collapse,
+          // как если бы кликнули по chevron. detail-row здесь не матчится
+          // (нет data-project), так что клики по day-bar уходят в ветку
+          // ниже без побочного toggle.
+          var dataRow = el.closest("tr[data-project]");
+          if (dataRow) {{
+            var rowChev = dataRow.querySelector(".chevron");
+            if (rowChev) {{
+              onChevronClick({{ currentTarget: rowChev, stopPropagation: function () {{}} }});
+              return;
+            }}
+          }}
           var bar = el.closest(".day-bar");
           if (bar) {{
             onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
@@ -1968,6 +2094,20 @@ def render_html(
             ev.preventDefault();
             onChevronClick({{ currentTarget: chev, stopPropagation: function () {{}} }});
             return;
+          }}
+          // Same whole-row semantics for keyboard. Только на фокусируемых
+          // элементах (sortable th, sort-ind) — пусть keydown обрабатывает
+          // их собственная логика. Здесь реагируем только когда focus
+          // реально внутри data-row (что бывает после tab по chevron,
+          // и в перспективе — после tab по row если повесим tabindex).
+          var dataRow = el.closest("tr[data-project]");
+          if (dataRow) {{
+            var rowChev = dataRow.querySelector(".chevron");
+            if (rowChev) {{
+              ev.preventDefault();
+              onChevronClick({{ currentTarget: rowChev, stopPropagation: function () {{}} }});
+              return;
+            }}
           }}
           var bar = el.closest(".day-bar");
           if (bar) {{
