@@ -7,7 +7,8 @@
 
 Input/output split + cost: для каждого дня и каждого (day, hour) bucket
 храним и total (input+output), и пару (input, output) — параллельные
-структуры `_split`. Используется для split-стека на .day-bar/.bar-24h
+структуры `_split`. Используется для split-стека на .bar-24h (и раньше — на
+.day-bar, до перехода на day-grid heatmap).
 (inline linear-gradient) и для расчёта стоимости через
 `config.compute_cost(in, out, DEFAULT_MODEL)`. Этот же паттерн
 используется в build_dashboard.py::Week.days_split / HourlyBar.
@@ -647,14 +648,16 @@ def render_project_detail(
     total_tokens: int,
     now_msk: datetime,
 ) -> str:
-    """HTML inline-зоны под строкой проекта: дневной ряд + 24h для выбранного дня.
+    """HTML inline-зоны под строкой проекта: дневной heatmap + 24h для выбранного дня.
 
     Структура (всё внутри одной <td colspan="6">):
       .detail-inner
-        .detail-header         "N дней · всего X · пик DD MMM (Y)"
-        .day-chart             грид-баров (1..N дней)
-          .day-bars            row of N .day-bar элементов
-          .day-labels          row of N .day-label элементов (DD)
+        .detail-header         "N дней · день DD MMM (T / $C)"
+        .day-grid              GitHub-style heatmap (7 строк Пн..Вс × N недель)
+          .day-grid__corner    пустой (1×1)
+          .day-grid__col-head  month label (один на смену месяца)
+          .day-grid__row-head  Пн / Ср / Пт (только эти 3, по гайдлайну)
+          .day-grid__cell      одна ячейка = один день, 4 уровня интенсивности
         .day-separator         "DD MMM · total · X.XM" (про выбранный день)
         .hour-chart            сюда JS подменяет innerHTML при клике
           .chart-shell.chart-shell--24h
@@ -666,12 +669,16 @@ def render_project_detail(
           {"max_value": N, "use_log": bool, "selected_day": "YYYY-MM-DD"}
         </script>
 
-    Клик по .day-bar: JS читает .day-hour-map, обновляет .hour-chart и
-    .day-separator, переключает класс .selected на барах.
+    Клик по .day-grid__cell: JS читает .day-hour-map, обновляет .hour-chart и
+    .day-separator, переключает класс .day-grid__cell--selected на ячейках.
 
-    Per-project normalized Y (100% = max за этот проект). Лог-шкала включается
-    автоматически если max/min (по ненулевым дням) > LOG_SCALE_RATIO_THRESHOLD.
-    1-day проект: один full-width бар с подписью «единственный день активности»,
+    Окно грида: 1-е число предыдущего месяца .. today MSK (inclusive), обёрнутое
+    в полные недели Пн..Вск. Внутри окна — 4 уровня зелёного (25/50/75/100% от
+    max_value за проект), пустые дни в окне — pale, ячейки вне окна (padding
+    + будущие дни текущей недели) — transparent и некликабельные. Сегодня —
+    точка в углу, выбранный день — белая обводка. Лог-шкала (use_log) тут
+    НЕ используется: bucket'и работают только в линейной шкале.
+    1-day проект: грид рисуется как обычно (1 цветная ячейка в окне ~50),
     24h рендерится сразу.
     """
     days_sorted: list[date] = sorted(ts.days.keys())
@@ -710,15 +717,15 @@ def render_project_detail(
 
     # Заголовок. Per-day view: "N дней · день DD MMM (T / $C)".
     # Выбранный день = selected_day (см. ниже), и tokens/cost берутся
-    # для НЕГО, не для всего проекта. При клике по day-bar JS
+    # для НЕГО, не для всего проекта. При клике по day-grid__cell JS
     # (rebuild24h) пересчитывает header через data-атрибуты. Peak-день
-    # убран из header (он виден в дневном ряду как .day-bar--peak) —
+    # убран из header (он виден в day-grid как ячейка intensity-4) —
     # на узких экранах header и так перегружен, +3 поля тяжело.
     n_days_label = "1 день" if is_one_day else f"{len(days_sorted)} дней"
-    click_hint = (
-        "" if is_one_day
-        else '<span class="detail-hint">↓ клик по дню → 24h</span>'
-    )
+    # Hint показываем всегда: day-grid всегда clickable (кроме out-of-window
+    # и пустых ячеек), даже в 1-day проекте (там единственный цветной
+    # квадратик в гриде тоже кликается для обновления 24h).
+    click_hint = '<span class="detail-hint">↓ клик по дню → 24h</span>'
     # Initial selected-day label.
     sel_in, sel_out = ts.days_split.get(selected_day, (0, 0))
     sel_cost = compute_cost(sel_in, sel_out, DEFAULT_MODEL)
@@ -737,66 +744,129 @@ def render_project_detail(
         f'</div>'
     )
 
-    # Дневной ряд: один бар на день. height_pct считаем здесь, в Python —
-    # max известен на момент сборки.
-    day_bars: list[str] = []
-    day_labels: list[str] = []
-    for d in days_sorted:
-        v = ts.days.get(d, 0)
-        in_v, out_v = ts.days_split.get(d, (0, 0))
-        h_pct = bar_height_pct(v, max_value, use_log)
-        is_peak = (v > 0 and v == max_value)
-        is_selected = (d == selected_day)
-        bar_cls = "day-bar"
-        if v <= 0:
-            bar_cls += " day-bar--empty"
-        if is_peak:
-            bar_cls += " day-bar--peak"
-        if is_selected:
-            bar_cls += " day-bar--selected"
-        # Tooltip split-разбивка: "DD MMM · ↑I · ↓O (Σ T) · NN% · клик → 24h".
-        # Используется тот же контракт стрелок, что в build_dashboard.py
-        # (↑ = input, ↓ = output). Empty bar: short tip без стрелок.
-        if v > 0:
-            in_pct = (in_v / v * 100.0) if v > 0 else 0.0
-            style_extra = (
-                f";background:linear-gradient(to top,"
-                f"var(--bar-in) 0% {in_pct:.1f}%,"
-                f"var(--bar-out) {in_pct:.1f}% 100%)"
-            )
-            tip = (
-                f"{format_day_short(d)} · "
-                f"↑{in_v:,} · ↓{out_v:,} "
-                f"(Σ {v:,}) · {format_pct(v, total_tokens)}% · клик → 24h"
-            )
-        else:
-            style_extra = ""
-            tip = f"{format_day_short(d)} · 0 · 0%"
-        day_bars.append(
-            f'<div class="{bar_cls}" '
-            f'data-day="{format_day_iso(d)}" '
-            f'data-tokens="{v}" '
-            f'style="height: {h_pct:.1f}%;{style_extra.lstrip(";")}" '
-            f'title="{html.escape(tip)}" '
-            f'role="button" tabindex="0" aria-label="{html.escape(tip)}">'
-            f'</div>'
-        )
-        # Лейбл: только день (без месяца) — месяц один на всю короткую серию.
-        day_labels.append(f'<span class="day-label">{d.day:02d}</span>')
+    # === Day grid (GitHub-style heatmap) ===
+    # Окно: предыдущий месяц (с 1-го числа) + текущий (по today MSK).
+    # Сетка 7 строк (Пн..Вс) × N колонок (недель), с padding-ячейками за
+    # пределами окна (начало предыдущей недели + конец текущей, до Вск).
+    # 4 уровня интенсивности зелёного для дней с данными, pale для пустых,
+    # transparent для out-of-window. Сегодня — точка в углу, выбранный
+    # день — белая обводка.
+    today_date = now_msk.date()
+    first_of_this_month = date(today_date.year, today_date.month, 1)
+    prev_month_last_day = first_of_this_month - timedelta(days=1)
+    prev_month_start = date(prev_month_last_day.year, prev_month_last_day.month, 1)
+    window_start = prev_month_start  # всегда 1-е число предыдущего месяца
+    window_end = today_date
+    # Грид-границы: понедельник недели с window_start .. воскресенье недели с window_end.
+    grid_start = window_start - timedelta(days=window_start.weekday())
+    grid_end = window_end + timedelta(days=(6 - window_end.weekday()))
+    n_weeks = (grid_end - grid_start).days // 7 + 1
 
-    one_day_caption = ""
-    if is_one_day:
-        one_day_caption = (
-            f'<div class="day-caption">'
-            f'единственный день активности · {html.escape(format_tokens(ts.days[days_sorted[0]]))}'
-            f'</div>'
-        )
+    # Month labels: в колонке показываем месяц первого понедельника.
+    # Если в колонке происходит смена месяца между Пн и Вск — берём месяц Пн
+    # (это совпадает с GitHub: метка месяца "привязана" к колонке).
+    month_label_cells: list[str] = []
+    prev_month_seen: int | None = None
+    for col in range(n_weeks):
+        col_first = grid_start + timedelta(days=col * 7)
+        m = col_first.month
+        if m != prev_month_seen:
+            month_label_cells.append(
+                f'<div class="day-grid__col-head" '
+                f'style="grid-column: {col + 2}">'
+                f'{_MONTHS_RU_SHORT[m - 1].upper()}'
+                f'</div>'
+            )
+            prev_month_seen = m
+
+    # DOW labels: только Пн / Ср / Пт (по гайдлайну GitHub).
+    dow_label_cells: list[str] = []
+    for row_idx in range(7):
+        label = {0: "Пн", 2: "Ср", 4: "Пт"}.get(row_idx, "")
+        if label:
+            dow_label_cells.append(
+                f'<div class="day-grid__row-head" '
+                f'style="grid-row: {row_idx + 2}">'
+                f'{label}'
+                f'</div>'
+            )
+
+    # Day cells: 7 × N, intensity bucket относительно max_value.
+    # log-шкала (use_log) для грида НЕ используется — в GitHub-style
+    # bucket'и работают только в линейной шкале (log растягивает малые
+    # значения и съедает визуальную разницу между бакетами).
+    def _intensity_level(value: int, mv: int) -> int:
+        if value <= 0 or mv <= 0:
+            return 0
+        r = value / mv
+        if r <= 0.25:
+            return 1
+        if r <= 0.50:
+            return 2
+        if r <= 0.75:
+            return 3
+        return 4
+
+    day_cells: list[str] = []
+    for col in range(n_weeks):
+        for row in range(7):
+            day = grid_start + timedelta(days=col * 7 + row)
+            in_window = (window_start <= day <= window_end)
+            is_today = (day == today_date)
+            is_selected = (day == selected_day)
+            if in_window:
+                v = ts.days.get(day, 0)
+                in_v, out_v = ts.days_split.get(day, (0, 0))
+            else:
+                v, in_v, out_v = 0, 0, 0
+            level = _intensity_level(v, max_value) if in_window else 0
+
+            cls = "day-grid__cell"
+            if not in_window:
+                cls += " day-grid__cell--out"
+            elif level > 0:
+                cls += f" day-grid__cell--intensity-{level}"
+            # иначе — default (pale empty, в CSS rgba(255,255,255,0.06))
+            if is_today and in_window:
+                cls += " day-grid__cell--today"
+            if is_selected:
+                cls += " day-grid__cell--selected"
+
+            # Tooltip: split-разбивка (↑input ↓output), как было в .day-bar
+            # (теперь — в .day-grid__cell, контракт стрелок сохранён).
+            if not in_window:
+                tip = format_day_short(day)
+                clickable = False
+            elif v > 0:
+                tip = (
+                    f"{format_day_short(day)} · "
+                    f"↑{in_v:,} · ↓{out_v:,} "
+                    f"(Σ {v:,}) · {format_pct(v, total_tokens)}% · клик → 24h"
+                )
+                clickable = True
+            else:
+                tip = f"{format_day_short(day)} · 0 · 0%"
+                clickable = False
+
+            attrs = [
+                f'class="{cls}"',
+                f'data-day="{format_day_iso(day)}"',
+                f'data-tokens="{v}"',
+                f'style="grid-row: {row + 2}; grid-column: {col + 2};"',
+                f'title="{html.escape(tip)}"',
+            ]
+            if clickable:
+                attrs.append('role="button" tabindex="0"')
+                attrs.append(f'aria-label="{html.escape(tip)}"')
+            day_cells.append(f'<div {" ".join(attrs)}></div>')
 
     day_chart = (
-        f'<div class="day-chart">'
-        f'<div class="day-bars">{"".join(day_bars)}</div>'
-        f'<div class="day-labels">{"".join(day_labels)}</div>'
-        f'{one_day_caption}'
+        f'<div class="day-grid" '
+        f'style="grid-template-columns: 22px repeat({n_weeks}, 1fr);">'
+        f'<div class="day-grid__corner" style="grid-row: 1; grid-column: 1;"></div>'
+        f'{"".join(month_label_cells)}'
+        f'{"".join(dow_label_cells)}'
+        f'{"".join(day_cells)}'
         f'</div>'
     )
 
@@ -824,7 +894,7 @@ def render_project_detail(
     )
 
     # day-hour-map: {day_iso: {hour: {"total", "in", "out"}}} для всех
-    # дней проекта. Используется JS'ом при клике на day-bar — пересобирает
+    # дней проекта. Используется JS'ом при клике на .day-grid__cell — пересобирает
     # .hour-chart с split-градиентом. Schema сменилась с {{hour: int}} на
     # {{hour: {total, in, out}}} чтобы JS мог рендерить inline gradient
     # без дополнительных lookup'ов в отдельный split-map.
@@ -1010,7 +1080,7 @@ def render_html(
     """
     week_labels = ", ".join(w.label for w in weeks)
     # MSK now, расщеплённое на ISO date и hour — прокидывается в JS, чтобы
-    # при клике по day-bar корректно решать "is target day today" (будущие
+    # при клике по .day-grid__cell корректно решать "is target day today" (будущие
     # часы сегодняшнего дня получают state="future", не "active").
     now_msk_iso = now_msk.date().isoformat()
     now_msk_hour = now_msk.hour
@@ -1277,17 +1347,21 @@ def render_html(
     }}
     .detail-inner {{
       /* ADR-0008: per-row expandable activity block.
-         Default = block flow (stacked, как было, N>7 дней).
-         .detail-inner--side-by-side modifier ставит JS, если
-         data-n-days на .detail-header ≤ 7. */
+         Default = block flow (stacked).
+         .detail-inner--side-by-side modifier ставит JS, всегда для текущей
+         реализации (day-grid — фиксированной ширины, не зависит от N дней
+         в проекте). */
       padding: 14px 22px 18px;
     }}
     .detail-inner--side-by-side {{
       /* ADR-0008: двухстрочный grid. Header занимает верхний ряд
-         на всю ширину; day-chart и hour-chart лежат в нижнем ряду
-         (30% / 70%) прямо под ним. */
+         на всю ширину; day-grid и hour-chart лежат в нижнем ряду
+         (фиксированная ширина грида слева / остаток справа).
+         Фиксированная ширина слева = 180px потому что day-grid 7×N
+         при N≈7-8 недель выходит в 22px (метки Пн/Ср/Пт) + 7×~16px
+         (ячейки) + 7×3px (gap) ≈ 162px, плюс 18px на «воздух». */
       display: grid;
-      grid-template-columns: 30% 1fr;
+      grid-template-columns: 180px 1fr;
       grid-template-rows: auto 1fr;
       column-gap: 18px;
       row-gap: 12px;
@@ -1298,20 +1372,20 @@ def render_html(
       grid-row: 1;
       margin-bottom: 0;
     }}
-    .detail-inner--side-by-side .day-chart {{
+    .detail-inner--side-by-side .day-grid {{
       grid-column: 1;
       grid-row: 2;
       min-width: 0;
       margin-bottom: 0;
+      align-self: start;  /* грид не растягивается на всю высоту 24h */
     }}
     .detail-inner--side-by-side .hour-chart {{
       grid-column: 2;
       grid-row: 2;
       min-width: 0;
     }}
-    .detail-inner--side-by-side .day-separator,
-    .detail-inner--side-by-side .day-caption {{
-      display: none;
+    .detail-inner--side-by-side .day-separator {{
+      display: none;  /* разделитель не нужен, когда грид + 24h лежат side-by-side */
     }}
     .detail-header {{
       font-size: 11px;
@@ -1321,7 +1395,7 @@ def render_html(
       margin-bottom: 14px;
     }}
     .detail-hint {{
-      /* Подсказка про кликабельность дневного ряда. Тонкий secondary
+      /* Подсказка про кликабельность дневного грида. Тонкий secondary
          стиль, чтобы не конкурировать с основной метрикой слева. */
       margin-left: 12px;
       text-transform: none;
@@ -1330,67 +1404,88 @@ def render_html(
       opacity: 0.6;
     }}
 
-    /* === Day chart (дневной ряд) === */
-    .day-chart {{
-      margin-bottom: 14px;
-    }}
-    .day-bars {{
+    /* === Day grid (GitHub-style heatmap) === */
+    /* 7 строк (Пн..Вс) × N недель. Шапка сверху (месяц), шапка слева
+       (Пн/Ср/Пт), в углу — пустой corner. Ячейка = 1 день; 4 уровня
+       интенсивности зелёного, pale для пустого, transparent для
+       out-of-window (padding + будущие дни текущей недели). */
+    .day-grid {{
       display: grid;
-      grid-auto-flow: column;
-      grid-auto-columns: 1fr;
-      gap: 4px;
-      height: 96px;
-      align-items: end;
+      grid-template-rows: 14px repeat(7, 16px);
+      gap: 3px;
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-size: 9px;
+      color: var(--muted);
+      width: 100%;
     }}
-    .day-bar {{
-      /* Split-стек: input (внизу, --bar-in) → output (сверху, --bar-out).
-         Inline linear-gradient ставится в Python render через style="…".
-         Один тон на оба чарта (day + 24h) по согласованию с TL: --bar-out
-         = #10b981 (accent-2) для визуальной связности project-dashboard.
-         --bar-in = #4a5070 (тёмно-синий, тот же, что в build_dashboard.py
-         для общего дашборда — единая палитра input/output). */
-      --bar-in: #4a5070;
-      --bar-out: #10b981;
-      border-radius: 6px 6px 2px 2px;
-      min-height: 2px;
-      cursor: pointer;
-      transition: filter 0.15s ease, box-shadow 0.15s ease, outline-offset 0.15s ease;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    .day-grid__corner {{ /* пустой, в layout grid (1,1) */ }}
+    .day-grid__col-head {{
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 9px;
+      line-height: 14px;
+      color: var(--muted);
+      opacity: 0.85;
+      /* Позиция задаётся inline через style="grid-column: …". */
     }}
-    .day-bar:hover {{ filter: brightness(1.18); }}
-    .day-bar:focus-visible {{
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
+    .day-grid__row-head {{
+      font-size: 9px;
+      letter-spacing: 0.04em;
+      line-height: 16px;
+      text-align: right;
+      padding-right: 6px;
+      align-self: center;
+      color: var(--muted);
+      opacity: 0.7;
+      /* Позиция задаётся inline через style="grid-row: …". */
     }}
-    .day-bar--empty {{
-      background: rgba(255, 255, 255, 0.06);
-      box-shadow: none;
+    .day-grid__cell {{
+      width: 100%;
+      height: 16px;
+      background: rgba(255, 255, 255, 0.06);  /* default = empty/pale в окне */
+      border-radius: 2px;
+      position: relative;
       cursor: default;
+      transition: filter 0.12s ease;
     }}
-    .day-bar--empty:hover {{ filter: none; }}
-    .day-bar--peak {{
-      box-shadow: none;
+    .day-grid__cell[role="button"] {{ cursor: pointer; }}
+    .day-grid__cell[role="button"]:hover {{ filter: brightness(1.35); }}
+    .day-grid__cell[role="button"]:focus-visible {{
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+      z-index: 1;
     }}
-    .day-bar--selected {{
-      outline: 1px solid rgba(255, 255, 255, 0.55);
+    /* 4 уровня зелёного (var(--accent-2) = #10b981). 0% / 25% / 50% / 75% / 100%
+       от max_value внутри проекта. Те же opacity, что в GitHub: 0.30 / 0.55 /
+       0.80 / 1.00 — нормировано на глаз, чтобы разница между бакетами читалась
+       на тёмном фоне панели. */
+    .day-grid__cell--intensity-1 {{ background: rgba(16, 185, 129, 0.30); }}
+    .day-grid__cell--intensity-2 {{ background: rgba(16, 185, 129, 0.55); }}
+    .day-grid__cell--intensity-3 {{ background: rgba(16, 185, 129, 0.80); }}
+    .day-grid__cell--intensity-4 {{ background: rgba(16, 185, 129, 1.00); }}
+    /* Сегодня: маленькая белая точка в правом верхнем углу ячейки. */
+    .day-grid__cell--today::after {{
+      content: "";
+      position: absolute;
+      top: 1px;
+      right: 1px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--ink);
+      pointer-events: none;
+    }}
+    /* Выбранный день (тот, что показан в 24h): белая обводка. */
+    .day-grid__cell--selected {{
+      outline: 1.5px solid rgba(255, 255, 255, 0.85);
       outline-offset: -1px;
+      z-index: 1;
     }}
-    .day-labels {{
-      display: grid;
-      grid-auto-flow: column;
-      grid-auto-columns: 1fr;
-      gap: 4px;
-      margin-top: 6px;
-      text-align: center;
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1;
-    }}
-    .day-caption {{
-      margin-top: 8px;
-      font-size: 11px;
-      color: var(--muted);
-      text-align: center;
+    /* Out-of-window: padding начала (Пн..1-е число прошлого месяца) +
+       конца текущей недели (после today). Transparent + некликабельно. */
+    .day-grid__cell--out {{
+      background: transparent;
+      pointer-events: none;
     }}
 
     /* === Day separator (между daily chart и 24h stream) === */
@@ -1450,7 +1545,7 @@ def render_html(
     .bar-24h.current {{
       /* Split-стек через inline linear-gradient (см. _render_24h_stream
          в build_dashboard.py). Один тон output на оба чарта (day + 24h) —
-         тот же #10b981, что в .day-bar. CSS-vars на классе — родительский
+         тот же #10b981, что в .day-grid__cell. CSS-vars на классе — родительский
          var() резолвится на самом элементе для inline style. */
       --bar-in: #4a5070;
       --bar-out: #10b981;
@@ -1687,7 +1782,7 @@ def render_html(
 
   <script>
     // Server-side timestamp в MSK, нужен JS'у для решения "is target day today"
-    // при пересборке 24h после клика по day-bar. Передаётся из билдера
+    // при пересборке 24h после клика по .day-grid__cell. Передаётся из билдера
     // (формат ISO date + hour MSK).
     window.__NOW_MSK_ISO__ = "{now_msk_iso}";
     window.__NOW_MSK_HOUR__ = {now_msk_hour};
@@ -1705,16 +1800,17 @@ def render_html(
     // Контракт (рендерится в build_project_dashboard.py):
     //   - <span class="chevron" aria-controls="detail-<slug>">  в первой ячейке
     //   - <tr class="detail-row" id="detail-<slug>" hidden>      сразу после строки
-    //   - внутри detail-row: .day-bars / .day-labels / .day-separator /
-    //     .hour-chart + <script class="day-hour-map"> + <script class="day-meta">
+    //   - внутри detail-row: .day-grid (GitHub-style heatmap) /
+    //     .day-separator (в side-by-side скрыт) / .hour-chart +
+    //     <script class="day-hour-map"> + <script class="day-meta">
     //   - now_msk_iso = today MSK date как ISO строка (глобал от билдера)
     //
     // Состояние не persistent: после meta-refresh всё сворачивается.
     // Логика:
     //   - click на chevron → toggle detail-row.hidden + chevron[aria-expanded]
-    //   - click на day-bar → JS читает day-hour-map, пересобирает .hour-chart
-    //     innerHTML для выбранного дня, обновляет .day-separator, переключает
-    //     класс .day-bar--selected на барах.
+    //   - click на .day-grid__cell → JS читает day-hour-map, пересобирает
+    //     .hour-chart innerHTML для выбранного дня, обновляет .day-separator,
+    //     переключает класс .day-grid__cell--selected на ячейках.
     (function () {{
       "use strict";
       var NOW_MSK_ISO = window.__NOW_MSK_ISO__ || "";
@@ -1776,7 +1872,7 @@ def render_html(
       // Определена на top-level IIFE (вместе с fmtTokens), чтобы была
       // видна из rebuild24h. Раньше жила внутри build24hCells (closure),
       // и rebuild24h падал с "fmtMoney is not defined" при первом
-      // же вызове после клика по day-bar.
+      // же вызове после клика по .day-grid__cell.
       function fmtMoney(amount) {{
         return "$" + amount.toFixed(2).replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, ",");
       }}
@@ -1941,13 +2037,13 @@ def render_html(
           header.setAttribute("data-selected-day", targetDay);
         }}
 
-        // Переключаем selected на барах
-        var bars = detailRow.querySelectorAll(".day-bar");
-        for (var i = 0; i < bars.length; i++) {{
-          if (bars[i].getAttribute("data-day") === targetDay) {{
-            bars[i].classList.add("day-bar--selected");
+        // Переключаем selected на ячейках грида
+        var cells = detailRow.querySelectorAll(".day-grid__cell");
+        for (var i = 0; i < cells.length; i++) {{
+          if (cells[i].getAttribute("data-day") === targetDay) {{
+            cells[i].classList.add("day-grid__cell--selected");
           }} else {{
-            bars[i].classList.remove("day-bar--selected");
+            cells[i].classList.remove("day-grid__cell--selected");
           }}
         }}
       }}
@@ -2003,46 +2099,42 @@ def render_html(
         }}
       }}
 
-      function onDayBarClick(ev) {{
-        var bar = ev.currentTarget;
-        if (bar.classList.contains("day-bar--empty")) return;
-        var day = bar.getAttribute("data-day");
+      function onDayCellClick(ev) {{
+        var cell = ev.currentTarget;
+        // Out-of-window ячейки (padding + будущие дни) и пустые ячейки
+        // (data-tokens="0") некликабельные — checked по классу и атрибуту,
+        // чтобы не дублировать логику фильтрации на стороне Python.
+        if (cell.classList.contains("day-grid__cell--out")) return;
+        if (cell.getAttribute("data-tokens") === "0") return;
+        var day = cell.getAttribute("data-day");
         if (!day) return;
         ev.stopPropagation();
-        var detailRow = bar.closest("tr.detail-row");
+        var detailRow = cell.closest("tr.detail-row");
         if (!detailRow) return;
         rebuild24h(detailRow, day);
       }}
 
-      function onDayBarKey(ev) {{
+      function onDayCellKey(ev) {{
         if (ev.key === "Enter" || ev.key === " ") {{
           ev.preventDefault();
-          onDayBarClick({{ currentTarget: ev.currentTarget }});
+          onDayCellClick({{ currentTarget: ev.currentTarget }});
         }}
       }}
 
       function init() {{
-        // ADR-0008: layout switch по data-n-days.
-        // N ≤ 7 → side-by-side (30% days / 70% hours), иначе stacked.
-        // Один проход на load; meta-refresh пересоберёт DOM и init() вызовется
-        // снова — класс восстановится. Persistent state не нужен: layout
-        // детерминирован из data-n-days, а не из user choice.
-        var SIDE_BY_SIDE_MAX = 7;
+        // day-grid — фиксированной ширины (180px), не зависит от N дней
+        // в проекте. Поэтому .detail-inner--side-by-side применяем ВСЕГДА,
+        // без N-порога (раньше был ≤7). stacked-варианта больше нет —
+        // грид слева + 24h справа работает и для 1-day, и для 50-day.
         var detailRows = document.querySelectorAll("tr.detail-row");
         for (var dri = 0; dri < detailRows.length; dri++) {{
-          var hdr = detailRows[dri].querySelector(".detail-header");
           var inner = detailRows[dri].querySelector(".detail-inner");
-          if (!hdr || !inner) continue;
-          var n = parseInt(hdr.getAttribute("data-n-days") || "0", 10);
-          if (n > 0 && n <= SIDE_BY_SIDE_MAX) {{
-            inner.classList.add("detail-inner--side-by-side");
-          }} else {{
-            inner.classList.add("detail-inner--stacked");
-          }}
+          if (!inner) continue;
+          inner.classList.add("detail-inner--side-by-side");
         }}
 
         // Event delegation на <tbody>: один handler на parent вместо
-        // N штук на каждом шевроне/баре. Устойчиво к meta-refresh и к
+        // N штук на каждом шевроне/ячейке. Устойчиво к meta-refresh и к
         // случаям, когда часть DOM пересоздаётся.
         //
         // NB: ev.target может быть TEXT NODE (напр. символ ▸ внутри
@@ -2066,10 +2158,10 @@ def render_html(
             return;
           }}
           // Whole-row click: ADR-0008 UX — клик по любой ячейке data-row
-          // (не по day-bar в detail-row) триггерит expand/collapse,
+          // (не по day-grid__cell в detail-row) триггерит expand/collapse,
           // как если бы кликнули по chevron. detail-row здесь не матчится
-          // (нет data-project), так что клики по day-bar уходят в ветку
-          // ниже без побочного toggle.
+          // (нет data-project), так что клики по day-grid__cell уходят в
+          // ветку ниже без побочного toggle.
           var dataRow = el.closest("tr[data-project]");
           if (dataRow) {{
             var rowChev = dataRow.querySelector(".chevron");
@@ -2078,9 +2170,9 @@ def render_html(
               return;
             }}
           }}
-          var bar = el.closest(".day-bar");
-          if (bar) {{
-            onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
+          var cell = el.closest(".day-grid__cell");
+          if (cell) {{
+            onDayCellClick({{ currentTarget: cell, stopPropagation: function () {{}} }});
             return;
           }}
         }});
@@ -2109,10 +2201,10 @@ def render_html(
               return;
             }}
           }}
-          var bar = el.closest(".day-bar");
-          if (bar) {{
+          var cell = el.closest(".day-grid__cell");
+          if (cell) {{
             ev.preventDefault();
-            onDayBarClick({{ currentTarget: bar, stopPropagation: function () {{}} }});
+            onDayCellClick({{ currentTarget: cell, stopPropagation: function () {{}} }});
             return;
           }}
         }});
