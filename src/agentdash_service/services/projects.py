@@ -14,6 +14,10 @@ from typing import Any
 
 from ..config import TZ, settings
 from ..models.projects import (
+    ProjectDetail,
+    ProjectDetailDay,
+    ProjectDetailWindow,
+    ProjectHourCell,
     ProjectRow,
     ProjectsSnapshot,
     ProjectsWindow,
@@ -277,4 +281,217 @@ def build_snapshot(
         now_msk=now.isoformat(),
         window=window,
         projects=projects,
+    )
+
+
+# ---- /api/v1/projects/{slug}/detail --------------------------------------
+
+
+def _sessions_for_project(
+    con: sqlite3.Connection,
+    project_slug: str,
+    start_ts_ms: int,
+    end_ts_ms: int,
+) -> list[str]:
+    """Return session_ids for the project in the window.
+
+    Joins message_rows (for activity in window) with sessions (for workspaceDir),
+    then filters by project_from_workspace().
+    """
+    msg_sql = """
+        SELECT session_id
+        FROM local_runtime_message_rows
+        WHERE created_at_ms >= ? AND created_at_ms < ?
+        GROUP BY session_id
+    """
+    sids: list[str] = [str(sid) for (sid,) in con.execute(msg_sql, (start_ts_ms, end_ts_ms))]
+    if not sids:
+        return []
+    placeholders = ",".join("?" for _ in sids)
+    sess_sql = (
+        f"SELECT session_id, record_json FROM local_runtime_sessions "
+        f"WHERE session_id IN ({placeholders})"
+    )
+    out: list[str] = []
+    try:
+        for sid, rec_json in con.execute(sess_sql, sids):
+            try:
+                rec = json.loads(rec_json) if rec_json else {}
+            except (json.JSONDecodeError, TypeError):
+                rec = {}
+            wsd = rec.get("workspaceDir")
+            workspace_dir = wsd if isinstance(wsd, str) else None
+            if project_from_workspace(workspace_dir) == project_slug:
+                out.append(str(sid))
+    except sqlite3.OperationalError:
+        return []
+    return out
+
+
+def _tokens_per_day_hour(
+    con: sqlite3.Connection,
+    sids: list[str],
+    start_ts_ms: int,
+    end_ts_ms: int,
+) -> dict[tuple[date, int], tuple[int, int]]:
+    """{(msk_date, hour): (input, output)} for the given session_ids."""
+    if not sids:
+        return {}
+    placeholders = ",".join("?" for _ in sids)
+    sql = f"""
+        SELECT date(ts / 1000, 'unixepoch', '{MSK_OFFSET}') AS msk_date,
+               CAST(strftime('%H', ts / 1000, 'unixepoch', '{MSK_OFFSET}') AS INT) AS hour,
+               SUM(input_tokens) AS in_sum,
+               SUM(output_tokens) AS out_sum
+        FROM local_runtime_token_usage
+        WHERE session_id IN ({placeholders})
+          AND ts >= ? AND ts < ?
+        GROUP BY msk_date, hour
+    """
+    out: dict[tuple[date, int], tuple[int, int]] = {}
+    params: list[Any] = [*sids, start_ts_ms, end_ts_ms]
+    for date_str, hour, in_sum, out_sum in con.execute(sql, params):
+        out[(date.fromisoformat(date_str), int(hour))] = (int(in_sum or 0), int(out_sum or 0))
+    return out
+
+
+def _intensity_levels(day_totals: list[int]) -> list[int]:
+    """Map each day total to intensity 0..4 (GitHub-style).
+
+    - 0 = empty (no data)
+    - 1..3 = non-zero quartiles
+    - 4 = max value
+    """
+    non_zero = sorted(t for t in day_totals if t > 0)
+    if not non_zero:
+        return [0] * len(day_totals)
+    n = len(non_zero)
+    max_v = non_zero[-1]
+    if n == 1:
+        return [4 if t == max_v else 0 for t in day_totals]
+    q1 = non_zero[n // 4]
+    q2 = non_zero[n // 2]
+    q3 = non_zero[3 * n // 4]
+    out: list[int] = []
+    for t in day_totals:
+        if t <= 0:
+            out.append(0)
+        elif t == max_v:
+            out.append(4)
+        elif t <= q1:
+            out.append(1)
+        elif t <= q2:
+            out.append(2)
+        elif t <= q3:
+            out.append(3)
+        else:
+            out.append(3)  # between q3 and max — already covered above
+    return out
+
+
+def build_project_detail(
+    con: sqlite3.Connection,
+    project_slug: str,
+    now: datetime,
+) -> ProjectDetail | None:
+    """Per-project detail: 5-week day grid + per-day 24h hours.
+
+    Returns None if the project has no sessions in the window.
+    """
+    today = now.date()
+    start_ms = time_svc.start_of_window_ms(today, TZ, settings.week_count)
+    end_ms = time_svc.end_of_now_ms(now)
+
+    sids = _sessions_for_project(con, project_slug, start_ms, end_ms)
+    if not sids:
+        return None
+
+    # 1. Per-(date, hour) tokens
+    per_dh = _tokens_per_day_hour(con, sids, start_ms, end_ms)
+
+    # 2. Aggregate to per-day totals
+    per_day_totals: dict[date, tuple[int, int]] = {}
+    for (d, _h), (in_t, out_t) in per_dh.items():
+        prev_in, prev_out = per_day_totals.get(d, (0, 0))
+        per_day_totals[d] = (prev_in + in_t, prev_out + out_t)
+
+    # 3. Build the 5 weeks × 7 days grid
+    iso = today.isocalendar()
+    current_monday = today - timedelta(days=iso[2] - 1)
+    week_count = settings.week_count
+
+    flat_totals: list[int] = []  # for intensity calc
+    days_out: list[ProjectDetailDay | None] = []
+    for i in range(week_count + 1):
+        offset = week_count - i
+        monday = current_monday - timedelta(weeks=offset)
+        for d_idx in range(7):
+            day_date = monday + timedelta(days=d_idx)
+            if day_date > today:
+                # future / out-of-window
+                days_out.append(None)
+                flat_totals.append(0)
+                continue
+            in_t, out_t = per_day_totals.get(day_date, (0, 0))
+            total = in_t + out_t
+            flat_totals.append(total)
+            if total == 0:
+                days_out.append(None)
+                continue
+            days_out.append(ProjectDetailDay(
+                date=day_date.isoformat(),
+                input=in_t,
+                output=out_t,
+                total=total,
+                cost_usd=compute_cost(in_t, out_t, settings),
+                intensity=0,  # filled in below
+            ))
+
+    # 4. Compute intensities on the flat totals
+    intensities = _intensity_levels(flat_totals)
+    days_with_intensity: list[ProjectDetailDay | None] = []
+    for day, lvl in zip(days_out, intensities, strict=True):
+        if day is None:
+            days_with_intensity.append(None)
+        else:
+            days_with_intensity.append(day.model_copy(update={"intensity": lvl}))
+
+    # 5. Build hours dict: date -> [24 ProjectHourCell]
+    hours_out: dict[str, list[ProjectHourCell]] = {}
+    for d, _ in per_day_totals.items():
+        cells: list[ProjectHourCell] = []
+        for h in range(24):
+            hin, hout = per_dh.get((d, h), (0, 0))
+            cells.append(ProjectHourCell(
+                hour=h,
+                total=hin + hout,
+                input=hin,
+                output=hout,
+            ))
+        hours_out[d.isoformat()] = cells
+
+    # 6. Aggregates
+    total_in = sum(in_t for in_t, _ in per_day_totals.values())
+    total_out = sum(out_t for _, out_t in per_day_totals.values())
+    total_tokens = total_in + total_out
+    max_value = max((d.total for d in days_with_intensity if d is not None), default=0)
+    active_dates = sorted(
+        d.isoformat()
+        for d, (di, do) in per_day_totals.items()
+        if (di + do) > 0
+    )
+
+    start_monday, _ = time_svc.current_week_window(today, settings.week_count)
+    return ProjectDetail(
+        now_msk=now.isoformat(),
+        project=project_slug,
+        window=ProjectDetailWindow(start=start_monday.isoformat(), end=today.isoformat()),
+        days=days_with_intensity,
+        hours=hours_out,
+        max_value=max_value,
+        totals_input=total_in,
+        totals_output=total_out,
+        totals_tokens=total_tokens,
+        totals_cost_usd=compute_cost(total_in, total_out, settings),
+        active_dates=active_dates,
     )
