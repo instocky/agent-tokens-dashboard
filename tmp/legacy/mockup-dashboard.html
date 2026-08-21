@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Repo-Pulse · mockup (per-row expand)</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --row: #14171d;
+    --row-hover: #181c24;
+    --row-active: #1b2030;
+    --border: #1f242c;
+    --text: #e5e7eb;
+    --muted: #6b7280;
+    --muted-2: #9ca3af;
+    --bar: #5b6b9e;
+    --bar-top: #2dd4bf;
+    --bar-selected: #ffffff;
+    --header: #ffffff;
+    --link: #cbd5e1;
+    --grid: #1a1d23;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; color: #f3f4f6; margin: 0 0 16px; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .hint code { background: #1a1d23; padding: 2px 6px; border-radius: 4px; color: var(--muted-2); }
+
+  /* table */
+  .table { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 28px 1.6fr 110px 90px 110px 110px 60px;
+         align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border);
+         cursor: pointer; user-select: none; transition: background 0.12s; }
+  .row:hover { background: var(--row-hover); }
+  .row.expanded { background: var(--row-active); }
+  .row:last-child { border-bottom: 0; }
+  .chev { color: var(--muted-2); transition: transform 0.18s; display: inline-block; }
+  .row.expanded .chev { transform: rotate(90deg); color: var(--bar-top); }
+  .name { color: var(--link); font-weight: 500; }
+  .num { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted-2); }
+  .col-head { display: grid; grid-template-columns: 28px 1.6fr 110px 90px 110px 110px 60px;
+              padding: 8px 16px; color: var(--muted); font-size: 11px; text-transform: uppercase;
+              letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+
+  /* block */
+  .block-wrap { background: var(--row-active); border-top: 1px solid var(--border);
+                padding: 14px 16px 18px 44px; }
+  .block-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; font-size: 12px; }
+  .block-head .label { color: var(--text); font-weight: 500; }
+  .block-head .cost  { color: var(--muted-2); }
+  .block-head .hint2 { color: var(--muted); margin-left: 8px; }
+
+  /* charts row */
+  .charts { display: flex; gap: 16px; align-items: stretch; }
+  .charts.stacked { flex-direction: column; gap: 18px; }
+  .day-col  { flex: 0 0 30%; min-width: 0; }
+  .hour-col { flex: 1 1 auto; min-width: 0; }
+  .stacked .day-col, .stacked .hour-col { flex: 0 0 auto; width: 100%; }
+
+  .chart-title { font-size: 11px; color: var(--muted-2); margin-bottom: 6px;
+                 text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 110px;
+          padding: 4px 0 0; border-bottom: 1px solid var(--grid); }
+  .bar { flex: 1; background: var(--bar); border-radius: 3px 3px 0 0; position: relative;
+         min-height: 2px; transition: filter 0.12s; cursor: pointer; display: flex;
+         flex-direction: column; justify-content: flex-end; overflow: hidden; }
+  .bar .top { background: var(--bar-top); width: 100%; }
+  .bar:hover { filter: brightness(1.18); }
+  .bar.selected { outline: 1.5px solid var(--bar-selected); outline-offset: 1px; }
+  .bar .lbl { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center;
+              font-size: 10px; color: var(--muted); }
+  .bar .val { position: absolute; top: -16px; left: 0; right: 0; text-align: center;
+              font-size: 10px; color: var(--text); opacity: 0; transition: opacity 0.1s; }
+  .bar:hover .val { opacity: 1; }
+  .bar.selected .val { opacity: 1; color: var(--bar-top); }
+
+  .x-axis { display: flex; gap: 2px; margin-top: 6px; }
+  .x-axis span { flex: 1; text-align: center; font-size: 10px; color: var(--muted); }
+
+  /* footer */
+  .footer { display: flex; justify-content: space-between; margin-top: 16px;
+            color: var(--muted-2); font-size: 11px; padding: 0 8px; }
+  .footer .links span { margin-right: 12px; }
+  .footer .links span.dot { color: var(--bar-top); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Repo-Pulse — mockup (per-row expand, side-by-side)</h1>
+  <div class="hint">
+    клик по строке — toggle · <code>Shift+клик</code> — открыть ещё один без закрытия текущего · состояние в localStorage
+  </div>
+
+  <div class="table">
+    <div class="col-head">
+      <span></span><span>Project</span><span>Last activity</span><span>Duration</span>
+      <span>Tokens</span><span>Rate</span><span>Sessions</span>
+    </div>
+
+    <!-- project rows (id is project_path) -->
+    <div class="row" data-id="repo-pulse">
+      <span class="chev">▶</span>
+      <span class="name">Repo-Pulse</span>
+      <span class="muted">2026-08-03</span>
+      <span class="num">1d 12h</span>
+      <span class="num">3.41M</span>
+      <span class="num">92.3K/h</span>
+      <span class="num">17</span>
+    </div>
+
+    <div class="row" data-id="simulator-webstudio-edu">
+      <span class="chev">▶</span>
+      <span class="name">simulator-webstudio-edu</span>
+      <span class="muted">2026-07-31</span>
+      <span class="num">4h 33m</span>
+      <span class="num">1.15M</span>
+      <span class="num">253.3K/h</span>
+      <span class="num">1</span>
+    </div>
+
+    <div class="row" data-id="college-operations">
+      <span class="chev">▶</span>
+      <span class="name">college-operations</span>
+      <span class="muted">2026-07-30</span>
+      <span class="num">1d 4h</span>
+      <span class="num">9.4M</span>
+      <span class="num">324.6K/h</span>
+      <span class="num">7</span>
+    </div>
+
+    <div class="row" data-id="stt-gateway">
+      <span class="chev">▶</span>
+      <span class="name">stt-gateway</span>
+      <span class="muted">2026-07-24</span>
+      <span class="num">18h 37m</span>
+      <span class="num">18.27M</span>
+      <span class="num">980.6K/h</span>
+      <span class="num">3</span>
+    </div>
+
+    <div class="row" data-id="0723-docs-department">
+      <span class="chev">▶</span>
+      <span class="name">0723-docs-department</span>
+      <span class="muted">2026-07-23</span>
+      <span class="num">58m</span>
+      <span class="num">465.3K</span>
+      <span class="num">475.9K/h</span>
+      <span class="num">1</span>
+    </div>
+
+    <div class="row" data-id="docstudio" data-default-open="1">
+      <span class="chev">▶</span>
+      <span class="name">docstudio</span>
+      <span class="muted">2026-07-22</span>
+      <span class="num">2d 7h</span>
+      <span class="num">60.25M</span>
+      <span class="num">1.08M/h</span>
+      <span class="num">9</span>
+    </div>
+
+    <div class="row" data-id="web-bulk">
+      <span class="chev">▶</span>
+      <span class="name">web-bulk</span>
+      <span class="muted">2026-08-20</span>
+      <span class="num">35m</span>
+      <span class="num">313.3K</span>
+      <span class="num">539.4K/h</span>
+      <span class="num">1</span>
+    </div>
+
+    <div class="row" data-id="python-engineering-standards">
+      <span class="chev">▶</span>
+      <span class="name">python-engineering-standards</span>
+      <span class="muted">2026-08-20</span>
+      <span class="num">14m</span>
+      <span class="num">202.3K</span>
+      <span class="num">827.5K/h</span>
+      <span class="num">2</span>
+    </div>
+
+    <div class="row" data-id="0820" data-default-open="1">
+      <span class="chev">▶</span>
+      <span class="name">0820</span>
+      <span class="muted">2026-08-20</span>
+      <span class="num">2m</span>
+      <span class="num">75.4K</span>
+      <span class="num">1.73M/h</span>
+      <span class="num">1</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="links">
+      <span>22 PROJECTS</span>·<span>172 SESSIONS</span>·<span>5 WEEKS (W-30, W-31, W-32, W-33, W-34)</span>
+    </div>
+    <div><span class="dot">●</span> 149.05M TOKENS · MSK (UTC+3)</div>
+  </div>
+</div>
+
+<script>
+/* ---------- mock data ---------- */
+/* key: project_id -> { days: [{date, tokens, cost}], hours: [{hour, tokens, cost}], daysRange } */
+const MOCK = {
+  "docstudio": {
+    /* 3-day view, side-by-side */
+    daysRange: 3,
+    days: [
+      { date: "20", tokens: 8.4,  cost: 0.02, top: 0.3 },
+      { date: "21", tokens: 12.1, cost: 0.04, top: 0.4 },
+      { date: "22", tokens: 25.77,cost: 6.30, top: 0.6, selected: true },
+    ],
+    hours: [
+      0,0,0,0,0,0,0.4,1.2,2.1,3.0,4.5,5.1,6.8,7.2,6.5,5.0,3.2,2.1,1.0,0.5,0.3,0.1,0,0
+    ],
+    hoursDate: "22 июл",
+    hoursTotal: { tokens: "25.77M", cost: "$6.30" }
+  },
+  "0820": {
+    /* 18-day view, triggers STACKED fallback (N > 7) */
+    daysRange: 18,
+    days: [
+      { date: "27", tokens: 11.2, cost: 0.03, top: 0.4 },
+      { date: "28", tokens: 9.8,  cost: 0.03, top: 0.35 },
+      { date: "29", tokens: 0,    cost: 0,    top: 0 },
+      { date: "30", tokens: 7.5,  cost: 0.02, top: 0.3 },
+      { date: "31", tokens: 0,    cost: 0,    top: 0 },
+      { date: "01", tokens: 0,    cost: 0,    top: 0 },
+      { date: "02", tokens: 0,    cost: 0,    top: 0 },
+      { date: "03", tokens: 0,    cost: 0,    top: 0 },
+      { date: "04", tokens: 0,    cost: 0,    top: 0 },
+      { date: "05", tokens: 0,    cost: 0,    top: 0 },
+      { date: "06", tokens: 0,    cost: 0,    top: 0 },
+      { date: "07", tokens: 0,    cost: 0,    top: 0 },
+      { date: "08", tokens: 0,    cost: 0,    top: 0 },
+      { date: "09", tokens: 0,    cost: 0,    top: 0 },
+      { date: "10", tokens: 0,    cost: 0,    top: 0 },
+      { date: "11", tokens: 0,    cost: 0,    top: 0 },
+      { date: "12", tokens: 0,    cost: 0,    top: 0 },
+      { date: "13", tokens: 0.262,cost: 0.08, top: 0.2, selected: true },
+    ],
+    hours: [
+      0,0,0,0,0,0,0,0,0,0,0,0.262,0,0,0,0,0,0,0,0,0,0,0,0
+    ],
+    hoursDate: "13 авг",
+    hoursTotal: { tokens: "262.1K", cost: "$0.08" }
+  }
+};
+
+/* ---------- state ---------- */
+const KEY = "repulse:expanded";
+const SIDE_BY_SIDE_MAX = 7;  // N days threshold
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+}
+function saveState(s) { localStorage.setItem(KEY, JSON.stringify(s)); }
+
+function fmtTokens(m) {
+  if (m >= 1) return m.toFixed(2) + "M";
+  if (m >= 0.001) return (m*1000).toFixed(1) + "K";
+  return "0";
+}
+
+/* ---------- rendering ---------- */
+function renderBlock(projectId) {
+  const data = MOCK[projectId];
+  if (!data) return "";
+  const useStacked = data.daysRange > SIDE_BY_SIDE_MAX;
+
+  const dayMax = Math.max(...data.days.map(d => d.tokens), 1);
+  const dayBars = data.days.map(d => {
+    const h = Math.max((d.tokens / dayMax) * 100, d.tokens > 0 ? 4 : 0);
+    const topH = Math.max(d.top * h, d.tokens > 0 ? 1 : 0);
+    const cls = d.selected ? "bar selected" : "bar";
+    return `<div class="${cls}" data-day="${d.date}" data-tokens="${d.tokens}">
+      <div class="top" style="height:${topH}%"></div>
+      <div style="height:${h - topH}%"></div>
+      <div class="lbl">${d.date}</div>
+      <div class="val">${fmtTokens(d.tokens)}</div>
+    </div>`;
+  }).join("");
+
+  const hourMax = Math.max(...data.hours, 0.001);
+  const hourBars = data.hours.map((v, i) => {
+    const h = (v / hourMax) * 100;
+    const topH = h * 0.18;  // mock: top slice ~ green accent
+    return `<div class="bar" style="height:${Math.max(h, v > 0 ? 3 : 0)}%">
+      <div class="top" style="height:${topH}%"></div>
+      <div class="lbl" style="position:static; padding-top:2px;">${String(i).padStart(2,'0')}</div>
+      ${v > 0 ? `<div class="val">${fmtTokens(v)}M</div>` : ''}
+    </div>`;
+  }).join("");
+
+  const dayXLabels = data.days.map(d => `<span>${d.date}</span>`).join("");
+
+  const head = `
+    <div class="block-head">
+      <span class="label">${data.daysRange} ДНЕЙ · ДЕНЬ ${data.hoursDate.toUpperCase()}
+        (${data.hoursTotal.tokens} / ${data.hoursTotal.cost})</span>
+      <span class="hint2">↓ клик по дню → 24h</span>
+    </div>`;
+
+  const charts = `
+    <div class="charts ${useStacked ? 'stacked' : ''}">
+      <div class="day-col">
+        <div class="chart-title">дни</div>
+        <div class="bars">${dayBars}</div>
+        <div class="x-axis" style="margin-top:18px;">${dayXLabels}</div>
+      </div>
+      <div class="hour-col">
+        <div class="chart-title">${data.hoursDate} · ${data.hoursTotal.tokens} / ${data.hoursTotal.cost}</div>
+        <div class="bars">${hourBars}</div>
+      </div>
+    </div>`;
+
+  return `<div class="block-wrap">${head}${charts}</div>`;
+}
+
+/* ---------- expand/collapse ---------- */
+function applyState() {
+  const state = loadState();
+  document.querySelectorAll(".row").forEach(row => {
+    const id = row.dataset.id;
+    const wrap = row.nextElementSibling;
+    if (wrap && wrap.classList.contains("block-wrap")) wrap.remove();
+    if (state[id]?.open) {
+      row.classList.add("expanded");
+      row.insertAdjacentHTML("afterend", renderBlock(id));
+    } else {
+      row.classList.remove("expanded");
+    }
+  });
+}
+
+/* default-open rows on first load only */
+(function initDefaults() {
+  const state = loadState();
+  if (Object.keys(state).length === 0) {
+    document.querySelectorAll(".row[data-default-open]").forEach(r => {
+      state[r.dataset.id] = { open: true };
+    });
+    saveState(state);
+  }
+})();
+
+document.querySelectorAll(".row").forEach(row => {
+  row.addEventListener("click", (e) => {
+    const id = row.dataset.id;
+    const state = loadState();
+    const isOpen = !!state[id]?.open;
+    if (!e.shiftKey) {
+      // accordion: close all others
+      Object.keys(state).forEach(k => { if (state[k]) state[k].open = false; });
+    }
+    state[id] = { open: !isOpen };
+    saveState(state);
+    applyState();
+  });
+});
+
+applyState();
+</script>
+</body>
+</html>

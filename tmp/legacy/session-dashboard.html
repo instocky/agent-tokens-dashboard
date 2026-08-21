@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="refresh" content="60" />
+  <title>Session Dashboard — 2026-08-20 17:42 MSK</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #181b22;
+      --panel-2: #1d2129;
+      --ink: #f5f7fb;
+      --muted: rgba(216, 223, 236, 0.62);
+      --line: rgba(255, 255, 255, 0.05);
+      --grid: rgba(148, 163, 184, 0.12);
+      --accent: #8b5cf6;
+      --accent-2: #10b981;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI Variable", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(139, 92, 246, 0.16), transparent 26%),
+        linear-gradient(180deg, #0e1014 0%, #11141a 100%);
+      min-height: 100vh;
+      padding: 32px 28px 48px;
+    }
+    .card {
+      max-width: 1280px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 22px 26px 18px;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+    }
+    .head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .title {
+      font-size: 12px;
+      letter-spacing: 0.20em;
+      text-transform: uppercase;
+      color: var(--ink);
+      font-weight: 600;
+    }
+    .meta {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    thead th {
+      text-align: left;
+      font-weight: 500;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    thead th.r { text-align: right; }
+    tbody td {
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--ink);
+    }
+    tbody td.r { text-align: right; }
+    tbody td.title {
+      max-width: 360px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody td.project {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+    tbody tr.active td { background: rgba(139, 92, 246, 0.07); }
+    tbody tr.active td:first-child {
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 9px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      background: rgba(139, 92, 246, 0.18);
+      color: #b794f4;
+      vertical-align: middle;
+    }
+    .empty { color: var(--muted); }
+    .center { text-align: center; padding: 32px 10px; }
+    .footer {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <div class="title">session dashboard</div>
+      <div class="meta">обновлено: 2026-08-20 17:42 MSK</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Project</th>
+          <th class="r">Date</th>
+          <th class="r">Duration</th>
+          <th class="r">Tokens</th>
+          <th class="r">Cost</th>
+          <th class="r">Requests</th>
+        </tr>
+      </thead>
+      <tbody>
+      <tr><td class="title">Build weather web app</td><td class="project">web-bulk</td><td class="r">2026-08-20</td><td class="r">55m</td><td class="r">313.3K</td><td class="r">$0.14</td><td class="r">12</td></tr>
+      <tr><td class="title">Build web app from docs</td><td class="project">python-engineering-standards</td><td class="r">2026-08-20</td><td class="r">1m</td><td class="r">33K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Project structure notes</td><td class="project">python-engineering-standards</td><td class="r">2026-08-20</td><td class="r">13m</td><td class="r">169.3K</td><td class="r">$0.05</td><td class="r">6</td></tr>
+      <tr><td class="title">Quick-версия CONVENTIONS-python</td><td class="project">Common</td><td class="r">2026-08-20</td><td class="r">27m</td><td class="r">102.2K</td><td class="r">$0.04</td><td class="r">5</td></tr>
+      <tr><td class="title">Python библиотеки ревью</td><td class="project">Common</td><td class="r">2026-08-20</td><td class="r">32m</td><td class="r">58.5K</td><td class="r">$0.04</td><td class="r">7</td></tr>
+      <tr><td class="title">Python проекты анализ</td><td class="project">Common</td><td class="r">2026-08-20</td><td class="r">5h 51m</td><td class="r">358.9K</td><td class="r">$0.13</td><td class="r">11</td></tr>
+      <tr><td class="title">Перенос материала в конструктор uCoz</td><td class="project">0820</td><td class="r">2026-08-20</td><td class="r">2m</td><td class="r">75.4K</td><td class="r">$0.03</td><td class="r">1</td></tr>
+      <tr><td class="title">Pi package install on Windows</td><td class="project">workspace</td><td class="r">2026-08-19</td><td class="r">1h 13m</td><td class="r">438.3K</td><td class="r">$0.13</td><td class="r">23</td></tr>
+      <tr><td class="title">Project Handoff Review</td><td class="project">mac-dev-agent</td><td class="r">2026-08-19</td><td class="r">&lt; 1m</td><td class="r">10.7K</td><td class="r">$0.00</td><td class="r">1</td></tr>
+      <tr><td class="title">Phase 0.3 handoff reconciliation</td><td class="project">mac-dev-agent</td><td class="r">2026-08-19</td><td class="r">4h 45m</td><td class="r">2.02M</td><td class="r">$0.73</td><td class="r">31</td></tr>
+      <tr><td class="title">Code review request</td><td class="project">mac-dev-agent</td><td class="r">2026-08-19</td><td class="r">1h 11m</td><td class="r">291.7K</td><td class="r">$0.13</td><td class="r">12</td></tr>
+      <tr><td class="title">Dashboard links new tab</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-19</td><td class="r">1m</td><td class="r">31.1K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Запуск LLD phase 0.2</td><td class="project">mac-dev-agent</td><td class="r">2026-08-18</td><td class="r">1h 5m</td><td class="r">521.3K</td><td class="r">$0.20</td><td class="r">15</td></tr>
+      <tr><td class="title">AI Dev Agent Architecture</td><td class="project">mac-dev-agent</td><td class="r">2026-08-18</td><td class="r">12m</td><td class="r">47.8K</td><td class="r">$0.02</td><td class="r">3</td></tr>
+      <tr><td class="title">Next steps after launch</td><td class="project">needle-research</td><td class="r">2026-08-18</td><td class="r">2h 18m</td><td class="r">679.6K</td><td class="r">$0.20</td><td class="r">21</td></tr>
+      <tr><td class="title">Check commit on Mac mini</td><td class="project">needle-research</td><td class="r">2026-08-18</td><td class="r">4m</td><td class="r">85.1K</td><td class="r">$0.03</td><td class="r">1</td></tr>
+      <tr><td class="title">Импорт студентов и преподавателей</td><td class="project">moodle</td><td class="r">2026-08-18</td><td class="r">24m</td><td class="r">57.6K</td><td class="r">$0.03</td><td class="r">5</td></tr>
+      <tr><td class="title">MiniMax Code架构图</td><td class="project">workspace</td><td class="r">2026-08-18</td><td class="r">1m</td><td class="r">27.1K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">MiniMax Code Architecture</td><td class="project">workspace</td><td class="r">2026-08-18</td><td class="r">1m</td><td class="r">9.1K</td><td class="r">$0.01</td><td class="r">2</td></tr>
+      <tr><td class="title">Установка diagram-design skill</td><td class="project">workspace</td><td class="r">2026-08-18</td><td class="r">3m</td><td class="r">103.5K</td><td class="r">$0.03</td><td class="r">2</td></tr>
+      <tr><td class="title">Тестирование пакета на Mac mini</td><td class="project">needle-research</td><td class="r">2026-08-17</td><td class="r">1h 53m</td><td class="r">324.2K</td><td class="r">$0.10</td><td class="r">22</td></tr>
+      <tr><td class="title">Windows 10 package testing</td><td class="project">needle-research</td><td class="r">2026-08-17</td><td class="r">37m</td><td class="r">174.6K</td><td class="r">$0.06</td><td class="r">6</td></tr>
+      <tr><td class="title">Email commit review next steps</td><td class="project">moodle</td><td class="r">2026-08-17</td><td class="r">25m</td><td class="r">66.6K</td><td class="r">$0.02</td><td class="r">3</td></tr>
+      <tr><td class="title">Pagination discussion</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-16</td><td class="r">37m</td><td class="r">103.6K</td><td class="r">$0.05</td><td class="r">8</td></tr>
+      <tr><td class="title">Поиск Growth% в коммитах</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-16</td><td class="r">8h 52m</td><td class="r">1.72M</td><td class="r">$0.49</td><td class="r">20</td></tr>
+      <tr><td class="title">Табличная сортировка</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-16</td><td class="r">49m</td><td class="r">125.5K</td><td class="r">$0.05</td><td class="r">6</td></tr>
+      <tr><td class="title">Weekly token limit indicator</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-16</td><td class="r">28m</td><td class="r">185.4K</td><td class="r">$0.06</td><td class="r">2</td></tr>
+      <tr><td class="title">Project dashboard input output cost</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-15 → 2026-08-16</td><td class="r">9h 52m</td><td class="r">603.3K</td><td class="r">$0.22</td><td class="r">8</td></tr>
+      <tr><td class="title">Добавить стоимость в графики</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-15</td><td class="r">45m</td><td class="r">208.2K</td><td class="r">$0.06</td><td class="r">2</td></tr>
+      <tr><td class="title">Разделение input/output токенов в дашборде</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-15</td><td class="r">3h 5m</td><td class="r">670K</td><td class="r">$0.21</td><td class="r">8</td></tr>
+      <tr><td class="title">Weekly scale mismatch</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-15</td><td class="r">19m</td><td class="r">115.3K</td><td class="r">$0.04</td><td class="r">3</td></tr>
+      <tr><td class="title">Скрипт анализа папок</td><td class="project">colledge-scheduler-concept</td><td class="r">2026-08-14</td><td class="r">1h 1m</td><td class="r">325.9K</td><td class="r">$0.13</td><td class="r">11</td></tr>
+      <tr><td class="title">Шеврон с графиком токенов</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-13</td><td class="r">2h 29m</td><td class="r">742.7K</td><td class="r">$0.28</td><td class="r">13</td></tr>
+      <tr><td class="title">Добавление новой статьи на сайт</td><td class="project">antibumaga.ru</td><td class="r">2026-08-13</td><td class="r">21m</td><td class="r">262.1K</td><td class="r">$0.08</td><td class="r">5</td></tr>
+      <tr><td class="title">DaisyUI интеграция</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-13</td><td class="r">2h 7m</td><td class="r">809.7K</td><td class="r">$0.30</td><td class="r">15</td></tr>
+      <tr><td class="title">Добавить параметр сортировки по росту</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-13</td><td class="r">15m</td><td class="r">65.2K</td><td class="r">$0.02</td><td class="r">6</td></tr>
+      <tr><td class="title">Обновление проекта на сервере</td><td class="project">0802-repo-pulse-lite</td><td class="r">2026-08-13</td><td class="r">&lt; 1m</td><td class="r">6.9K</td><td class="r">$0.00</td><td class="r">1</td></tr>
+      <tr><td class="title">Admin frontend variants</td><td class="project">workspace</td><td class="r">2026-08-12</td><td class="r">34m</td><td class="r">82.7K</td><td class="r">$0.03</td><td class="r">3</td></tr>
+      <tr><td class="title">MVP Framework Reflection</td><td class="project">db-contingent</td><td class="r">2026-08-12</td><td class="r">43m</td><td class="r">101.7K</td><td class="r">$0.04</td><td class="r">9</td></tr>
+      <tr><td class="title">Локальное развертывание Moodle 5.2 на Windows 10</td><td class="project">moodle</td><td class="r">2026-08-12</td><td class="r">4h 15m</td><td class="r">1.4M</td><td class="r">$0.36</td><td class="r">20</td></tr>
+      <tr><td class="title">Breadcrumbs design concepts</td><td class="project">db-contingent</td><td class="r">2026-08-12</td><td class="r">1h 3m</td><td class="r">776.5K</td><td class="r">$0.22</td><td class="r">7</td></tr>
+      <tr><td class="title">Student event tracking algorithm</td><td class="project">db-contingent</td><td class="r">2026-08-12</td><td class="r">44m</td><td class="r">422K</td><td class="r">$0.11</td><td class="r">5</td></tr>
+      <tr><td class="title">Read students live search ticket</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">1h 18m</td><td class="r">871.8K</td><td class="r">$0.27</td><td class="r">7</td></tr>
+      <tr><td class="title">Live search by FIO</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">6m</td><td class="r">53.3K</td><td class="r">$0.02</td><td class="r">2</td></tr>
+      <tr><td class="title">UI: вкладки и заголовок</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">43m</td><td class="r">627.9K</td><td class="r">$0.17</td><td class="r">3</td></tr>
+      <tr><td class="title">Анализ консистентности админки</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">2h 39m</td><td class="r">2.88M</td><td class="r">$0.80</td><td class="r">20</td></tr>
+      <tr><td class="title">Проверка orders CRUD UI</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">20m</td><td class="r">176K</td><td class="r">$0.05</td><td class="r">3</td></tr>
+      <tr><td class="title">Start ADR orders import</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">1h 33m</td><td class="r">2.07M</td><td class="r">$0.59</td><td class="r">7</td></tr>
+      <tr><td class="title">Добавить строку информации в админку</td><td class="project">db-contingent</td><td class="r">2026-08-11</td><td class="r">29m</td><td class="r">269.2K</td><td class="r">$0.09</td><td class="r">8</td></tr>
+      <tr><td class="title">启动订单CRUD UI任务</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">1h 19m</td><td class="r">554.1K</td><td class="r">$0.21</td><td class="r">7</td></tr>
+      <tr><td class="title">Order addition mechanism</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">24m</td><td class="r">88.1K</td><td class="r">$0.04</td><td class="r">3</td></tr>
+      <tr><td class="title">Orders model implementation</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">22m</td><td class="r">178.3K</td><td class="r">$0.07</td><td class="r">3</td></tr>
+      <tr><td class="title">Приказы по статусу студента</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">28m</td><td class="r">152.7K</td><td class="r">$0.06</td><td class="r">5</td></tr>
+      <tr><td class="title">Active tab alternatives</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">11m</td><td class="r">81.4K</td><td class="r">$0.03</td><td class="r">4</td></tr>
+      <tr><td class="title">Исправление ширины страниц</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">18m</td><td class="r">172.5K</td><td class="r">$0.05</td><td class="r">5</td></tr>
+      <tr><td class="title">Employee import tab</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">1h 13m</td><td class="r">934.6K</td><td class="r">$0.28</td><td class="r">5</td></tr>
+      <tr><td class="title">Git update on shared hosting</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">48m</td><td class="r">214.4K</td><td class="r">$0.06</td><td class="r">15</td></tr>
+      <tr><td class="title">Start coding project</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">1h 29m</td><td class="r">1.04M</td><td class="r">$0.33</td><td class="r">7</td></tr>
+      <tr><td class="title">Импорт групп из XLSX</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">43m</td><td class="r">292.3K</td><td class="r">$0.09</td><td class="r">6</td></tr>
+      <tr><td class="title">Импорт групп и специальностей из XLSX</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">4m</td><td class="r">91K</td><td class="r">$0.02</td><td class="r">2</td></tr>
+      <tr><td class="title">Menu role duplication fix</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">10m</td><td class="r">97.4K</td><td class="r">$0.03</td><td class="r">2</td></tr>
+      <tr><td class="title">Смена пароля админа локально</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">9m</td><td class="r">49.4K</td><td class="r">$0.02</td><td class="r">3</td></tr>
+      <tr><td class="title">UI визуальная иерархия</td><td class="project">db-contingent</td><td class="r">2026-08-10</td><td class="r">1m</td><td class="r">37.9K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">P2P сервис разворачивание</td><td class="project">chitchatter</td><td class="r">2026-08-09</td><td class="r">4h 52m</td><td class="r">1.93M</td><td class="r">$0.51</td><td class="r">45</td></tr>
+      <tr><td class="title">Review one-page spec</td><td class="project">Agent-Tools-Registry</td><td class="r">2026-08-08</td><td class="r">3h 24m</td><td class="r">1.65M</td><td class="r">$0.49</td><td class="r">15</td></tr>
+      <tr><td class="title">Apply Round 2 review fixes</td><td class="project">Agent-Tools-Registry</td><td class="r">2026-08-08</td><td class="r">23m</td><td class="r">172.2K</td><td class="r">$0.08</td><td class="r">1</td></tr>
+      <tr><td class="title">Implement Agent Tools Registry MVP</td><td class="project">Agent-Tools-Registry</td><td class="r">2026-08-08</td><td class="r">20m</td><td class="r">200.8K</td><td class="r">$0.08</td><td class="r">1</td></tr>
+      <tr><td class="title">Fix last update sorting</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-07</td><td class="r">17m</td><td class="r">172.2K</td><td class="r">$0.07</td><td class="r">2</td></tr>
+      <tr><td class="title">Добавление столбца токенов в час</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-07</td><td class="r">15m</td><td class="r">82.7K</td><td class="r">$0.04</td><td class="r">3</td></tr>
+      <tr><td class="title">Обсуждение сортировки по столбцам</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-07</td><td class="r">16m</td><td class="r">105.2K</td><td class="r">$0.04</td><td class="r">4</td></tr>
+      <tr><td class="title">Project Dashboard Script</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-07</td><td class="r">19m</td><td class="r">98.8K</td><td class="r">$0.05</td><td class="r">4</td></tr>
+      <tr><td class="title">Session dashboard script</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-07</td><td class="r">33m</td><td class="r">210.3K</td><td class="r">$0.09</td><td class="r">4</td></tr>
+      <tr><td class="title">Continue admin issue work</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">1h 4m</td><td class="r">941.8K</td><td class="r">$0.29</td><td class="r">5</td></tr>
+      <tr><td class="title">Импорт XLSX</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">38m</td><td class="r">441.6K</td><td class="r">$0.17</td><td class="r">2</td></tr>
+      <tr><td class="title">Continue xlsx export issue</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">49m</td><td class="r">477.7K</td><td class="r">$0.18</td><td class="r">4</td></tr>
+      <tr><td class="title">Continue domain students movements</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">44m</td><td class="r">626.3K</td><td class="r">$0.22</td><td class="r">4</td></tr>
+      <tr><td class="title">Domain lookups issue</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">1h 14m</td><td class="r">1.21M</td><td class="r">$0.39</td><td class="r">6</td></tr>
+      <tr><td class="title">DB Contingent Bootstrap</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">42m</td><td class="r">661.7K</td><td class="r">$0.22</td><td class="r">3</td></tr>
+      <tr><td class="title">Student Contingent Database App</td><td class="project">db-contingent</td><td class="r">2026-08-07</td><td class="r">2h 14m</td><td class="r">1.57M</td><td class="r">$0.45</td><td class="r">14</td></tr>
+      <tr><td class="title">Start coding new ADR</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">26m</td><td class="r">286.1K</td><td class="r">$0.10</td><td class="r">3</td></tr>
+      <tr><td class="title">ADR review draft</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">2m</td><td class="r">56.6K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Review adr-0806 dashboard code</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">11m</td><td class="r">136.9K</td><td class="r">$0.04</td><td class="r">2</td></tr>
+      <tr><td class="title">Dashboard handoff review</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">33m</td><td class="r">228.2K</td><td class="r">$0.10</td><td class="r">4</td></tr>
+      <tr><td class="title">Step 2 Code Review</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">24m</td><td class="r">267.5K</td><td class="r">$0.09</td><td class="r">3</td></tr>
+      <tr><td class="title">Project handoff step 2</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">24m</td><td class="r">589.7K</td><td class="r">$0.18</td><td class="r">1</td></tr>
+      <tr><td class="title">ADR Tech Lead review</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">53m</td><td class="r">395.5K</td><td class="r">$0.13</td><td class="r">5</td></tr>
+      <tr><td class="title">Step 1: create analytics.py from build_dashboard.py</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">23m</td><td class="r">243.9K</td><td class="r">$0.10</td><td class="r">1</td></tr>
+      <tr><td class="title">Создать ветку проекта</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-06</td><td class="r">4m</td><td class="r">49.7K</td><td class="r">$0.02</td><td class="r">3</td></tr>
+      <tr><td class="title">Weekly limit pill UI</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">12m</td><td class="r">92.3K</td><td class="r">$0.03</td><td class="r">3</td></tr>
+      <tr><td class="title">Оформление hero карточек</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">6m</td><td class="r">73.1K</td><td class="r">$0.02</td><td class="r">3</td></tr>
+      <tr><td class="title">Remove section title subscript</td><td class="project">college-publisher</td><td class="r">2026-08-05</td><td class="r">18m</td><td class="r">88.3K</td><td class="r">$0.03</td><td class="r">3</td></tr>
+      <tr><td class="title">Session Title Field</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">43m</td><td class="r">270.2K</td><td class="r">$0.09</td><td class="r">2</td></tr>
+      <tr><td class="title">Merge two pills in card</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">25m</td><td class="r">282.7K</td><td class="r">$0.11</td><td class="r">2</td></tr>
+      <tr><td class="title">Стилизация карточки стрима</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">31m</td><td class="r">294.3K</td><td class="r">$0.09</td><td class="r">5</td></tr>
+      <tr><td class="title">Project session info</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">11m</td><td class="r">162.9K</td><td class="r">$0.05</td><td class="r">2</td></tr>
+      <tr><td class="title">TB07 Idempotency Photos</td><td class="project">college-publisher</td><td class="r">2026-08-05</td><td class="r">4h 53m</td><td class="r">4.23M</td><td class="r">$1.22</td><td class="r">16</td></tr>
+      <tr><td class="title">Pill design feedback</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">30m</td><td class="r">380.7K</td><td class="r">$0.11</td><td class="r">5</td></tr>
+      <tr><td class="title">Редизайн карточек стримов</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">49m</td><td class="r">575K</td><td class="r">$0.16</td><td class="r">7</td></tr>
+      <tr><td class="title">Chart layout review</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">24m</td><td class="r">371.8K</td><td class="r">$0.12</td><td class="r">3</td></tr>
+      <tr><td class="title">Average tokens pill</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-05</td><td class="r">8m</td><td class="r">148K</td><td class="r">$0.04</td><td class="r">2</td></tr>
+      <tr><td class="title">TB06 docx mode</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">1h 13m</td><td class="r">327K</td><td class="r">$0.12</td><td class="r">4</td></tr>
+      <tr><td class="title">TB06 docx mode implementation</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">17m</td><td class="r">185K</td><td class="r">$0.08</td><td class="r">1</td></tr>
+      <tr><td class="title">TB04 завершён переход к TB05</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">59m</td><td class="r">580.5K</td><td class="r">$0.19</td><td class="r">4</td></tr>
+      <tr><td class="title">TB04 Skills and LLM Integration</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">1h 29m</td><td class="r">991.4K</td><td class="r">$0.31</td><td class="r">3</td></tr>
+      <tr><td class="title">TB03 sign-off и замечание к тесту</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">2m</td><td class="r">30.7K</td><td class="r">$0.01</td><td class="r">2</td></tr>
+      <tr><td class="title">TB03 Publishing Flow</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">1h 36m</td><td class="r">1.62M</td><td class="r">$0.50</td><td class="r">6</td></tr>
+      <tr><td class="title">Проверка этапа разработки</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">1h 1m</td><td class="r">378.6K</td><td class="r">$0.14</td><td class="r">6</td></tr>
+      <tr><td class="title">TL sign-off commit summary</td><td class="project">college-publisher</td><td class="r">2026-08-04</td><td class="r">6m</td><td class="r">30.1K</td><td class="r">$0.01</td><td class="r">3</td></tr>
+      <tr><td class="title">Auto-open browser in CMD</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-04</td><td class="r">2m</td><td class="r">33.1K</td><td class="r">$0.01</td><td class="r">2</td></tr>
+      <tr><td class="title">Редизайн верхних карточек</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-04</td><td class="r">34m</td><td class="r">130.7K</td><td class="r">$0.04</td><td class="r">3</td></tr>
+      <tr><td class="title">Редизайн карточек: пиллы в отдельную</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-04</td><td class="r">38m</td><td class="r">193.9K</td><td class="r">$0.07</td><td class="r">7</td></tr>
+      <tr><td class="title">Daily sessions and requests count</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-04</td><td class="r">27m</td><td class="r">186.7K</td><td class="r">$0.06</td><td class="r">5</td></tr>
+      <tr><td class="title">Add dashboard card with GitHub color scale</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-04</td><td class="r">1h 37m</td><td class="r">445.7K</td><td class="r">$0.16</td><td class="r">4</td></tr>
+      <tr><td class="title">Проверка расчёта столбцов</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">32m</td><td class="r">206.2K</td><td class="r">$0.10</td><td class="r">3</td></tr>
+      <tr><td class="title">Scale legend positioning</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">45m</td><td class="r">381.6K</td><td class="r">$0.16</td><td class="r">7</td></tr>
+      <tr><td class="title">Проверка построения линий графика</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">45m</td><td class="r">207.6K</td><td class="r">$0.09</td><td class="r">6</td></tr>
+      <tr><td class="title">Проверка замечаний дизайнера</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">17m</td><td class="r">125.3K</td><td class="r">$0.05</td><td class="r">5</td></tr>
+      <tr><td class="title">Review commits and README</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">11m</td><td class="r">104.6K</td><td class="r">$0.04</td><td class="r">3</td></tr>
+      <tr><td class="title">Weekly cap forecast</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">36m</td><td class="r">224.9K</td><td class="r">$0.08</td><td class="r">2</td></tr>
+      <tr><td class="title">Dashboard week card spacing</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">7m</td><td class="r">81.9K</td><td class="r">$0.03</td><td class="r">2</td></tr>
+      <tr><td class="title">Dashboard from template</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">53m</td><td class="r">288.2K</td><td class="r">$0.12</td><td class="r">5</td></tr>
+      <tr><td class="title">New design concept based on reference</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">10m</td><td class="r">108.9K</td><td class="r">$0.05</td><td class="r">2</td></tr>
+      <tr><td class="title">Move clock under columns</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">5m</td><td class="r">47.4K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Card tokens today</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">7m</td><td class="r">67.4K</td><td class="r">$0.03</td><td class="r">2</td></tr>
+      <tr><td class="title">Improve chart spacing</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">13m</td><td class="r">92K</td><td class="r">$0.04</td><td class="r">2</td></tr>
+      <tr><td class="title">Улучшить отступы диаграммы</td><td class="project">sqlite-script</td><td class="r">2026-08-03</td><td class="r">5m</td><td class="r">44.9K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Логарифмическая шкала</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">34m</td><td class="r">414.1K</td><td class="r">$0.13</td><td class="r">5</td></tr>
+      <tr><td class="title">Реализация скользящего окна</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">13m</td><td class="r">123K</td><td class="r">$0.05</td><td class="r">2</td></tr>
+      <tr><td class="title">Добавить tooltip с числом</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">5m</td><td class="r">59.4K</td><td class="r">$0.02</td><td class="r">2</td></tr>
+      <tr><td class="title">Запуск скрипта обновления с дашборда</td><td class="project">agent-tokens-dashboard</td><td class="r">2026-08-03</td><td class="r">19m</td><td class="r">93.5K</td><td class="r">$0.03</td><td class="r">4</td></tr>
+      <tr><td class="title">Review PRD and scripts</td><td class="project">sqlite-script</td><td class="r">2026-08-03</td><td class="r">45m</td><td class="r">603.6K</td><td class="r">$0.18</td><td class="r">9</td></tr>
+      <tr><td class="title">Implement 08</td><td class="project">Repo-Pulse</td><td class="r">2026-08-02 → 2026-08-03</td><td class="r">1d 4h</td><td class="r">281.8K</td><td class="r">$0.09</td><td class="r">2</td></tr>
+      <tr><td class="title">Fix dashboard chart encoding and styling</td><td class="project">sqlite-script</td><td class="r">2026-08-03</td><td class="r">16m</td><td class="r">301.6K</td><td class="r">$0.11</td><td class="r">2</td></tr>
+      <tr><td class="title">Implement step 07</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01 → 2026-08-02</td><td class="r">1h 1m</td><td class="r">306.9K</td><td class="r">$0.14</td><td class="r">5</td></tr>
+      <tr><td class="title">Implement 06</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">33m</td><td class="r">161.7K</td><td class="r">$0.07</td><td class="r">2</td></tr>
+      <tr><td class="title">Spec review of watchlist diff</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">32.4K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Standards review of watchlist diff</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">76K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Implement 05</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">45m</td><td class="r">590.8K</td><td class="r">$0.19</td><td class="r">2</td></tr>
+      <tr><td class="title">Spec review for gh diff</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">1m</td><td class="r">27.6K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Standards review for gh diff</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">52K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Implement 04</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">1h 40m</td><td class="r">740.6K</td><td class="r">$0.28</td><td class="r">5</td></tr>
+      <tr><td class="title">Spec review of lock module</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">33.4K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Standards review of lock module</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">3m</td><td class="r">64K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Implement 03</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">54m</td><td class="r">423.3K</td><td class="r">$0.16</td><td class="r">3</td></tr>
+      <tr><td class="title">Code review: standards axis</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">42.2K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Code review: spec axis</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">33.3K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Implement 02</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">18m</td><td class="r">98.4K</td><td class="r">$0.04</td><td class="r">2</td></tr>
+      <tr><td class="title">Implement 01</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">20m</td><td class="r">133.8K</td><td class="r">$0.05</td><td class="r">2</td></tr>
+      <tr><td class="title">Repo Pulse project status</td><td class="project">college-publisher</td><td class="r">2026-08-01</td><td class="r">40m</td><td class="r">272.2K</td><td class="r">$0.12</td><td class="r">3</td></tr>
+      <tr><td class="title">Standards review of 00 work</td><td class="project">college-publisher</td><td class="r">2026-08-01</td><td class="r">3m</td><td class="r">77.7K</td><td class="r">$0.02</td><td class="r">1</td></tr>
+      <tr><td class="title">Spec review of 00 work</td><td class="project">college-publisher</td><td class="r">2026-08-01</td><td class="r">2m</td><td class="r">30.2K</td><td class="r">$0.01</td><td class="r">1</td></tr>
+      <tr><td class="title">Ask Matt</td><td class="project">Repo-Pulse</td><td class="r">2026-08-01</td><td class="r">2h 20m</td><td class="r">312K</td><td class="r">$0.15</td><td class="r">26</td></tr>
+      <tr><td class="title">Telegram channel publishing pipeline</td><td class="project">college-publisher</td><td class="r">2026-07-31</td><td class="r">3h 9m</td><td class="r">359.2K</td><td class="r">$0.16</td><td class="r">24</td></tr>
+      <tr><td class="title">Идея калькулятора-симулятора</td><td class="project">simulator-webstudio-edu</td><td class="r">2026-07-31</td><td class="r">4h 33m</td><td class="r">1.15M</td><td class="r">$0.39</td><td class="r">12</td></tr>
+      <tr><td class="title">Inherited repo first steps</td><td class="project">antibumaga.ru</td><td class="r">2026-07-30</td><td class="r">22m</td><td class="r">170.2K</td><td class="r">$0.06</td><td class="r">5</td></tr>
+      <tr><td class="title">Merge branch with main</td><td class="project">college-operations</td><td class="r">2026-07-30</td><td class="r">3m</td><td class="r">38.3K</td><td class="r">$0.01</td><td class="r">2</td></tr>
+      <tr><td class="title">P8-D5 Transition</td><td class="project">college-operations</td><td class="r">2026-07-30</td><td class="r">4h 18m</td><td class="r">3.02M</td><td class="r">$0.87</td><td class="r">19</td></tr>
+      <tr><td class="title">WordPress integration plan execution</td><td class="project">college-operations</td><td class="r">2026-07-29</td><td class="r">5h 59m</td><td class="r">1.86M</td><td class="r">$0.63</td><td class="r">22</td></tr>
+      <tr><td class="title">WordPress REST API Setup</td><td class="project">college-operations</td><td class="r">2026-07-29</td><td class="r">55m</td><td class="r">246K</td><td class="r">$0.09</td><td class="r">11</td></tr>
+      <tr><td class="title">Подключение сервиса к WordPress</td><td class="project">college-operations</td><td class="r">2026-07-28 → 2026-07-29</td><td class="r">14h 15m</td><td class="r">524.6K</td><td class="r">$0.20</td><td class="r">28</td></tr>
+      <tr><td class="title">Написать SEO-статью по плану</td><td class="project">antibumaga.ru</td><td class="r">2026-07-28</td><td class="r">46m</td><td class="r">456.8K</td><td class="r">$0.16</td><td class="r">6</td></tr>
+      <tr><td class="title">Review implementation plan</td><td class="project">college-operations</td><td class="r">2026-07-27</td><td class="r">2h 13m</td><td class="r">2.53M</td><td class="r">$0.70</td><td class="r">10</td></tr>
+      <tr><td class="title">Обсуждение прогресса проекта</td><td class="project">college-operations</td><td class="r">2026-07-27</td><td class="r">1h 12m</td><td class="r">1.18M</td><td class="r">$0.35</td><td class="r">4</td></tr>
+      <tr><td class="title">Добавить статью в блог</td><td class="project">antibumaga.ru</td><td class="r">2026-07-27</td><td class="r">1h 17m</td><td class="r">1.25M</td><td class="r">$0.36</td><td class="r">12</td></tr>
+      <tr><td class="title">Audio Pipeline Phase 2</td><td class="project">stt-gateway</td><td class="r">2026-07-24</td><td class="r">13h 7m</td><td class="r">13.52M</td><td class="r">$3.91</td><td class="r">48</td></tr>
+      <tr><td class="title">Deepgram Python SDK реализация</td><td class="project">stt-gateway</td><td class="r">2026-07-23</td><td class="r">5h 5m</td><td class="r">4.49M</td><td class="r">$1.32</td><td class="r">29</td></tr>
+      <tr><td class="title">Ревью проектной документации</td><td class="project">stt-gateway</td><td class="r">2026-07-23</td><td class="r">25m</td><td class="r">264.2K</td><td class="r">$0.09</td><td class="r">4</td></tr>
+      <tr><td class="title">Управленческий onboarding-документ</td><td class="project">0723-docs-department</td><td class="r">2026-07-23</td><td class="r">58m</td><td class="r">465.3K</td><td class="r">$0.20</td><td class="r">4</td></tr>
+      <tr><td class="title">Code Review File Analysis</td><td class="project">docstudio</td><td class="r">2026-07-22</td><td class="r">3h 8m</td><td class="r">752.3K</td><td class="r">$0.23</td><td class="r">8</td></tr>
+      <tr><td class="title">Debug template analyze failure</td><td class="project">docstudio</td><td class="r">2026-07-22</td><td class="r">1h 24m</td><td class="r">1.46M</td><td class="r">$0.40</td><td class="r">4</td></tr>
+      <tr><td class="title">UI error pages track</td><td class="project">docstudio</td><td class="r">2026-07-22</td><td class="r">2h 51m</td><td class="r">2.45M</td><td class="r">$0.68</td><td class="r">4</td></tr>
+      <tr><td class="title">Приведение документации в порядок</td><td class="project">docstudio</td><td class="r">2026-07-21 → 2026-07-22</td><td class="r">19h 23m</td><td class="r">30.72M</td><td class="r">$7.62</td><td class="r">28</td></tr>
+      <tr><td class="title">Project Development Analysis</td><td class="project">docstudio</td><td class="r">2026-07-21</td><td class="r">1h 53m</td><td class="r">2.75M</td><td class="r">$0.74</td><td class="r">11</td></tr>
+      <tr><td class="title">Forms development stage</td><td class="project">docstudio</td><td class="r">2026-07-20 → 2026-07-21</td><td class="r">19h 14m</td><td class="r">12.55M</td><td class="r">$3.27</td><td class="r">28</td></tr>
+      <tr><td class="title">Review last commit and next steps</td><td class="project">docstudio</td><td class="r">2026-07-20</td><td class="r">4h 2m</td><td class="r">4.66M</td><td class="r">$1.27</td><td class="r">15</td></tr>
+      <tr><td class="title">Check last commit status</td><td class="project">docstudio</td><td class="r">2026-07-20</td><td class="r">2h 28m</td><td class="r">2.54M</td><td class="r">$0.67</td><td class="r">11</td></tr>
+      <tr><td class="title">README как архитектурный компас</td><td class="project">docstudio</td><td class="r">2026-07-20</td><td class="r">1h 13m</td><td class="r">2.37M</td><td class="r">$0.58</td><td class="r">6</td></tr>
+      </tbody>
+    </table>
+    <div class="footer">
+      <span>177 sessions · 5 weeks (W-30, W-31, W-32, W-33, W-34)</span>
+      <span>$43.86 · MSK (UTC+3)</span>
+    </div>
+  </div>
+</body>
+</html>
