@@ -111,7 +111,7 @@
     /* 5 rows (weeks) x 7 cols (days) */
     .day-grid-cells {
       display: grid;
-      grid-template-rows: repeat(5, 18px) 14px;
+      grid-template-rows: repeat(4, 18px) 14px;
       grid-template-columns: repeat(7, 1fr);
       gap: 3px;
       width: 100%;
@@ -358,23 +358,24 @@
     // ---- Detail panel (day grid + 24h) ---------------------------------
 
     function buildDayGrid(detail, today) {
-      // 35 days, 5 rows (weeks) x 7 cols (Mon..Sun).
-      // detail.days is oldest-first starting at detail.window.start (Mon
-      // of 4 weeks ago), forward through Sun of the current week.
-      // index 0 = window.start, index k = window.start + k days.
+      // 28 days, 4 rows (weeks) x 7 cols (Mon..Sun).
+      // The API returns 35 days (5 weeks: 4 finished + current). We display
+      // the 4 most recent (skip the oldest week) to match the reference.
+      // After skipping: i=0 = window.start + 7 days, i=27 = today-or-later.
       const startDate = new Date(detail.window.start);
+      startDate.setDate(startDate.getDate() + 7);
       const container = document.createElement("div");
       container.className = "day-grid-cells";
       const dayNames = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
-      for (let i = 0; i < 35; i++) {
+      for (let i = 0; i < 28; i++) {
         const cell = document.createElement("div");
         cell.className = "day-cell";
-        const d = detail.days[i];
-        // Compute the date for this position: i=0 is window.start, i=k is start+k days.
+        const d = detail.days[i + 7];  // skip oldest week
+        // Compute the date for this position: i=0 is startDate, i=k is startDate+k days.
         const cellDate = new Date(startDate);
         cellDate.setDate(startDate.getDate() + i);
         const cellDateStr = cellDate.toISOString().slice(0, 10);
-        const isFuture = cellDateStr > today;  // ISO string compare works for YYYY-MM-DD
+        const isFuture = cellDateStr > today;
         if (isFuture) {
           cell.classList.add("future");
           cell.title = "будущее";
@@ -391,7 +392,7 @@
         }
         container.appendChild(cell);
       }
-      // Day labels row (after 5 data rows)
+      // Day labels row (after 4 data rows)
       for (let i = 0; i < 7; i++) {
         const label = document.createElement("div");
         label.className = "day-label";
