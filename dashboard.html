@@ -765,10 +765,13 @@
       // Weekly cap pill
       el("week-cap").textContent = fmtCompact(wk.cap_tokens);
 
-      // Weekly charts (both linear and log rendered; CSS toggles which shows)
+      // Weekly charts (both linear and log rendered; CSS toggles which shows).
+      // API returns 5 weeks (4 finished + current). Display the 4 most recent
+      // (drop the oldest) so the layout matches legacy: W-N, W-N+1, ..., current.
       const scale = el("chart-scale").dataset.scale;
-      renderWeeks(wk.weeks, el("weeks-log"), true);
-      renderWeeks(wk.weeks, el("weeks-linear"), false);
+      const displayWeeks = wk.weeks.slice(-4);
+      renderWeeks(displayWeeks, el("weeks-log"), true);
+      renderWeeks(displayWeeks, el("weeks-linear"), false);
 
       // 24H eyebrow + meta
       el("eyebrow-date").textContent = todayDate;
