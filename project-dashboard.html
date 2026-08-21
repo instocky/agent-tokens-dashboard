@@ -123,6 +123,23 @@
       cursor: pointer; transition: filter 0.1s; position: relative;
     }
     .day-cell:hover { filter: brightness(1.35); }
+    /* Future day (after today, in the current week) — dashed outline, not clickable. */
+    .day-cell.future {
+      background: transparent;
+      border: 1px dashed rgba(255, 255, 255, 0.22);
+      cursor: default;
+      opacity: 1;
+    }
+    .day-cell.future:hover { filter: none; }
+    /* Today indicator — small dot in the top-right corner of today's cell. */
+    .day-cell.is-today::after {
+      content: "";
+      position: absolute;
+      top: 2px; right: 2px;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
     .day-cell[data-intensity="1"] { background: var(--L1); }
     .day-cell[data-intensity="2"] { background: var(--L2); }
     .day-cell[data-intensity="3"] { background: var(--L3); }
@@ -340,9 +357,9 @@
 
     // ---- Detail panel (day grid + 24h) ---------------------------------
 
-    function buildDayGrid(detail) {
+    function buildDayGrid(detail, today) {
       // 35 days, 5 rows (weeks) x 7 cols (Mon..Sun)
-      // detail.days is oldest-first, 35 entries
+      // detail.days is oldest-first, 35 entries; index 34 is today.
       const container = document.createElement("div");
       container.className = "day-grid-cells";
       const dayNames = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -350,17 +367,28 @@
         const cell = document.createElement("div");
         cell.className = "day-cell";
         const d = detail.days[i];
-        if (d) {
+        // Compute the date for this position: i=0 is 34 days ago, i=34 is today.
+        const cellDate = new Date(today);
+        cellDate.setDate(cellDate.getDate() - (34 - i));
+        const cellDateStr = cellDate.toISOString().slice(0, 10);
+        const isFuture = cellDateStr > today;  // ISO string compare works for YYYY-MM-DD
+        if (isFuture) {
+          cell.classList.add("future");
+          cell.title = "будущее";
+        } else if (d) {
           cell.dataset.date = d.date;
           cell.dataset.intensity = d.intensity;
           cell.title = `${fmtDayShort(d.date)}: ${fmtCompact(d.total)} (${fmtCost(d.cost_usd)})`;
           cell.addEventListener("click", () => onDayClick(p_slug_for_detail, d.date));
+          if (cellDateStr === today) cell.classList.add("is-today");
         } else {
-          cell.style.opacity = "0.25";
+          cell.style.opacity = "0.2";
+          cell.title = "нет данных";
+          if (cellDateStr === today) cell.classList.add("is-today");
         }
         container.appendChild(cell);
       }
-      // Day labels row (5th row, after 5 data rows = 6th row, index 35-41)
+      // Day labels row (after 5 data rows)
       for (let i = 0; i < 7; i++) {
         const label = document.createElement("div");
         label.className = "day-label";
@@ -422,6 +450,24 @@
       return container;
     }
 
+    // ---- localStorage: persist selected day per project ----------------
+
+    const SELECTED_DAY_KEY = "agentdashProjectSelectedDay";
+
+    function saveSelectedDay(slug, date) {
+      try {
+        const all = JSON.parse(localStorage.getItem(SELECTED_DAY_KEY) || "{}");
+        all[slug] = date;
+        localStorage.setItem(SELECTED_DAY_KEY, JSON.stringify(all));
+      } catch (e) { /* localStorage unavailable — silent */ }
+    }
+    function loadSelectedDay(slug) {
+      try {
+        const all = JSON.parse(localStorage.getItem(SELECTED_DAY_KEY) || "{}");
+        return all[slug] || null;
+      } catch (e) { return null; }
+    }
+
     let p_slug_for_detail = null;  // which project's detail is being rendered
 
     function selectDayInGrid(slug, date) {
@@ -456,18 +502,25 @@
     function renderDetail(slug, detail) {
       const inner = el(`detail-${slug}`);
       if (!inner) return;
+      const todayStr = detail.now_msk.slice(0, 10);
       const activeDays = detail.days.filter(d => d !== null);
       const activeDates = activeDays.map(d => d.date);
-      // Default selected day: latest active day, or today if today has data
-      const todayStr = detail.now_msk.slice(0, 10);
-      let selectedDate = activeDates.includes(todayStr) ? todayStr : (activeDates[activeDates.length - 1] || todayStr);
+      // Pick selected day: saved-in-localStorage (if still valid for this window),
+      // else today if today has data, else latest active day, else today.
+      const saved = loadSelectedDay(slug);
+      const savedValid = saved && activeDates.includes(saved);
+      const todayActive = activeDates.includes(todayStr);
+      const latestActive = activeDates[activeDates.length - 1];
+      const selectedDate = savedValid
+        ? saved
+        : (todayActive ? todayStr : (latestActive || todayStr));
 
       inner.innerHTML = "";
       // Header
       const header = document.createElement("div");
       header.className = "detail-header";
       header.innerHTML = `<strong>${activeDates.length}</strong> ДНЕЙ · `
-        + `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>`
+        + `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>`
         + ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
       inner.appendChild(header);
 
@@ -475,7 +528,7 @@
       const gridCell = document.createElement("div");
       gridCell.className = "day-grid";
       p_slug_for_detail = slug;
-      const grid = buildDayGrid(detail);
+      const grid = buildDayGrid(detail, todayStr);
       // Mark selected
       const firstDateCell = grid.querySelector(`.day-cell[data-date="${selectedDate}"]`);
       if (firstDateCell) firstDateCell.classList.add("selected");
@@ -501,6 +554,7 @@
     function onDayClick(slug, date) {
       const detail = state.detailCache.get(slug);
       if (!detail) return;
+      saveSelectedDay(slug, date);
       selectDayInGrid(slug, date);
       // Re-render 24h for new date
       const inner = el(`detail-${slug}`);
