@@ -358,8 +358,11 @@
     // ---- Detail panel (day grid + 24h) ---------------------------------
 
     function buildDayGrid(detail, today) {
-      // 35 days, 5 rows (weeks) x 7 cols (Mon..Sun)
-      // detail.days is oldest-first, 35 entries; index 34 is today.
+      // 35 days, 5 rows (weeks) x 7 cols (Mon..Sun).
+      // detail.days is oldest-first starting at detail.window.start (Mon
+      // of 4 weeks ago), forward through Sun of the current week.
+      // index 0 = window.start, index k = window.start + k days.
+      const startDate = new Date(detail.window.start);
       const container = document.createElement("div");
       container.className = "day-grid-cells";
       const dayNames = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -367,9 +370,9 @@
         const cell = document.createElement("div");
         cell.className = "day-cell";
         const d = detail.days[i];
-        // Compute the date for this position: i=0 is 34 days ago, i=34 is today.
-        const cellDate = new Date(today);
-        cellDate.setDate(cellDate.getDate() - (34 - i));
+        // Compute the date for this position: i=0 is window.start, i=k is start+k days.
+        const cellDate = new Date(startDate);
+        cellDate.setDate(startDate.getDate() + i);
         const cellDateStr = cellDate.toISOString().slice(0, 10);
         const isFuture = cellDateStr > today;  // ISO string compare works for YYYY-MM-DD
         if (isFuture) {
