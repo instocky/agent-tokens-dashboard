@@ -6,6 +6,11 @@ version: 0.1
 
 # Architecture — agentdash-service
 
+> New here? Start with [`README.md`](../README.md) — what the service
+> does, how to run it, project layout, time-zone rules. This file is the
+> architecture deep-dive: layers, request lifecycle, deployment
+> considerations, explicit out-of-scope.
+
 ## 1. Purpose
 
 Read-only HTTP API that serves JSON snapshots of token-usage data for
