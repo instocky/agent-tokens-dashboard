@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 
 from .config import settings
@@ -33,3 +33,10 @@ def get_db() -> Iterator[sqlite3.Connection]:
         yield con
     finally:
         con.close()
+
+
+def db_session() -> Generator[sqlite3.Connection, None, None]:
+    """FastAPI dependency that yields a read-only connection per request."""
+    with get_db() as con:
+        yield con
+

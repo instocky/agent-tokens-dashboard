@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .api.v1 import tokens as tokens_router
 from .config import settings
 from .db import get_db
 
@@ -26,6 +27,8 @@ app = FastAPI(
     version=__version__,
     description="Read-only HTTP API for token-usage dashboards",
 )
+
+app.include_router(tokens_router.router)
 
 
 @app.get("/api/v1/health")
