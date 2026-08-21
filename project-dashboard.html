@@ -1,317 +1,603 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Project Dashboard</title>
-  <style>
-    :root {
-      --bg: #0f1115;
-      --panel: #181b22;
-      --panel-2: #1d2129;
-      --ink: #f5f7fb;
-      --muted: rgba(216, 223, 236, 0.62);
-      --line: rgba(255, 255, 255, 0.05);
-      --grid: rgba(148, 163, 184, 0.12);
-      --accent: #8b5cf6;
-      --accent-2: #10b981;
-      --L1: rgba(16, 185, 129, 0.30);
-      --L2: rgba(16, 185, 129, 0.55);
-      --L3: rgba(16, 185, 129, 0.80);
-      --L4: #10b981;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "Inter", "Segoe UI Variable", sans-serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top right, rgba(139, 92, 246, 0.16), transparent 26%),
-        linear-gradient(180deg, #0e1014 0%, #11141a 100%);
-      min-height: 100vh;
-      padding: 24px 28px 48px;
-    }
-    .shell { max-width: 1280px; margin: 0 auto; }
-    .topbar {
-      display: flex; justify-content: space-between; align-items: center; gap: 16px;
-      margin-bottom: 18px; color: var(--muted);
-      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
-    }
-    .topbar a { color: inherit; text-decoration: none; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); }
-    .topbar a.active { color: var(--ink); border-color: var(--accent); }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 22px 26px 18px;
-      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
-    }
-    .head {
-      display: flex; align-items: baseline; justify-content: space-between;
-      margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
-    }
-    .title { font-size: 12px; letter-spacing: 0.20em; text-transform: uppercase; color: var(--ink); font-weight: 600; }
-    .meta { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
-    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-    thead th {
-      text-align: left; font-weight: 500; font-size: 10px;
-      letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
-      padding: 10px 12px; border-bottom: 1px solid var(--line);
-      white-space: nowrap;
-    }
-    thead th.r { text-align: right; }
-    thead th.sortable { cursor: pointer; user-select: none; }
-    thead th.sortable:hover { color: var(--ink); }
-    thead th.sortable.sorted { color: var(--ink); }
-    thead th .sort-ind { display: inline-block; width: 8px; margin-left: 4px; color: var(--accent); font-size: 9px; }
-    tbody td {
-      padding: 12px; border-bottom: 1px solid var(--line);
-      font-size: 13px; color: var(--ink);
-    }
-    tbody td.r { text-align: right; }
-    tbody tr.row-project { cursor: pointer; transition: background 0.1s; }
-    tbody tr.row-project:hover { background: rgba(255, 255, 255, 0.02); }
-    tbody tr.row-project.expanded td {
-      background: var(--panel-2);
-    }
-    tbody tr.row-project.expanded td:first-child {
-      box-shadow: inset 2px 0 0 var(--accent);
-    }
-    .chevron {
-      display: inline-block; width: 12px; margin-right: 6px;
-      color: var(--muted); font-size: 10px; line-height: 1;
-      transition: transform 0.15s;
-    }
-    tr.expanded .chevron { transform: rotate(90deg); color: var(--ink); }
-    .project-name { font-weight: 600; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
-    .pill-active { background: rgba(16, 185, 129, 0.16); color: #10b981; }
-    .pill-idle { background: rgba(148, 163, 184, 0.16); color: #94a3b8; }
-    .empty { color: var(--muted); }
-    .err { padding: 12px 16px; border: 1px solid #ef4444; border-radius: 12px; color: #ef4444; background: rgba(239, 68, 68, 0.08); margin-bottom: 12px; }
-    /* === Detail (expandable) === */
-    tbody tr.detail-row[hidden] { display: none; }
-    tbody tr.detail-row > td.detail-cell { padding: 0; background: transparent; }
-    .detail-inner {
-      padding: 16px 22px 20px;
-      display: grid;
-      grid-template-columns: 240px 1fr;
-      grid-template-rows: auto 1fr;
-      column-gap: 18px;
-      row-gap: 10px;
-      align-items: stretch;
-    }
-    .detail-header {
-      grid-column: 1 / -1; grid-row: 1;
-      font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
-    }
-    .detail-header strong { color: var(--ink); font-weight: 700; }
-    .day-grid { grid-column: 1; grid-row: 2; align-self: end; }
-    .hour-chart { grid-column: 2; grid-row: 2; min-width: 0; }
-    /* 5 rows (weeks) x 7 cols (days) */
-    .day-grid-cells {
-      display: grid;
-      grid-template-rows: repeat(4, 18px) 14px;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 3px;
-      width: 100%;
-      padding-bottom: 6px;
-    }
-    .day-cell {
-      width: 100%; height: 18px; border-radius: 2px;
-      background: rgba(255, 255, 255, 0.14);
-      cursor: pointer; transition: filter 0.1s; position: relative;
-    }
-    .day-cell:hover { filter: brightness(1.35); }
-    /* Future day (after today, in the current week) — dashed outline, not clickable. */
-    .day-cell.future {
-      background: transparent;
-      border: 1px dashed rgba(255, 255, 255, 0.40);
-      cursor: default;
-      opacity: 1;
-    }
-    .day-cell.future:hover { filter: none; }
-    /* Today indicator — small white dot in the top-right corner of today's cell. */
-    .day-cell.is-today::after {
-      content: "";
-      position: absolute;
-      top: 2px; right: 2px;
-      width: 4px; height: 4px;
-      border-radius: 50%;
-      background: #fff;
-    }
-    /* Selected day — white outline (was accent purple; reference uses white). */
-    .day-cell.selected { outline: 2px solid #fff; outline-offset: 1px; z-index: 1; }
-    .day-cell[data-intensity="1"] { background: var(--L1); }
-    .day-cell[data-intensity="2"] { background: var(--L2); }
-    .day-cell[data-intensity="3"] { background: var(--L3); }
-    .day-cell[data-intensity="4"] { background: var(--L4); box-shadow: 0 0 6px var(--L4); }
-    .day-label {
-      text-align: center; font-size: 11px; line-height: 14px;
-      color: var(--muted); text-transform: uppercase;
-      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
-    }
-    /* === 24h chart (inline) === */
-    .hours-24h {
-      display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px;
-    }
-    .hour-cell {
-      position: relative;
-      display: flex; flex-direction: column; justify-content: flex-end;
-      gap: 6px; min-height: 110px;
-    }
-    .bar-24h {
-      width: 100%; flex: 0 1 auto; align-self: end;
-      border-radius: 6px 6px 2px 2px; min-height: 2px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
-      transition: filter 0.15s ease;
-    }
-    .bar-24h:hover { filter: brightness(1.18); }
-    .bar-24h.active, .bar-24h.peak, .bar-24h.current {
-      --bar-in: #4a5070; --bar-out: #216e39;
-    }
-    .bar-24h.peak { box-shadow: none; }
-    .bar-24h.current { outline: 1px solid rgba(255,255,255,0.55); outline-offset: -1px; }
-    .bar-24h.future { height: 6px !important; background: transparent; border: 1px dashed rgba(255,255,255,0.18); box-shadow: none; opacity: 0.55; }
-    .bar-24h.empty { background: rgba(255,255,255,0.06); box-shadow: none; }
-    .hour-label { flex: none; text-align: center; color: var(--muted); font-size: 11px; line-height: 1; }
-    .hour-label--future { opacity: 0.4; }
-    .peak-value {
-      position: absolute; top: 4px; left: 0; right: 0;
-      text-align: center; color: #e6ebf6; font-size: 12px; line-height: 1.05;
-      pointer-events: none;
-      display: flex; flex-direction: column; align-items: center; gap: 1px;
-    }
-    .peak-value__sep { width: 70%; height: 1px; background: currentColor; opacity: 0.35; }
-    .peak-value__cost { font-size: 9px; color: var(--muted); }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <div class="topbar">
-      <span>Project Dashboard</span>
-      <span id="updated">—</span>
-      <span>
-        <a href="dashboard.html">Tokens</a>
-        <a href="project-dashboard.html" class="active">Projects</a>
-        <a href="session-dashboard.html">Sessions</a>
-      </span>
-    </div>
-
-    <div id="err"></div>
-
-    <div class="card">
-      <div class="head">
-        <div class="title" id="title">Project Usage</div>
-        <div class="meta" id="meta">—</div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Dashboard</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #181b22;
+        --panel-2: #1d2129;
+        --ink: #f5f7fb;
+        --muted: rgba(216, 223, 236, 0.62);
+        --line: rgba(255, 255, 255, 0.05);
+        --grid: rgba(148, 163, 184, 0.12);
+        --accent: #8b5cf6;
+        --accent-2: #10b981;
+        --L1: rgba(16, 185, 129, 0.3);
+        --L2: rgba(16, 185, 129, 0.55);
+        --L3: rgba(16, 185, 129, 0.8);
+        --L4: #10b981;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: 'Inter', 'Segoe UI Variable', sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(
+            circle at top right,
+            rgba(139, 92, 246, 0.16),
+            transparent 26%
+          ),
+          linear-gradient(180deg, #0e1014 0%, #11141a 100%);
+        min-height: 100vh;
+        padding: 24px 28px 48px;
+      }
+      .shell {
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+      }
+      .topbar a {
+        color: inherit;
+        text-decoration: none;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+      }
+      .topbar a.active {
+        color: var(--ink);
+        border-color: var(--accent);
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px 26px 18px;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+      }
+      .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 18px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .title {
+        font-size: 12px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .meta {
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+      }
+      thead th {
+        text-align: left;
+        font-weight: 500;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      thead th.r {
+        text-align: right;
+      }
+      thead th.sortable {
+        cursor: pointer;
+        user-select: none;
+      }
+      thead th.sortable:hover {
+        color: var(--ink);
+      }
+      thead th.sortable.sorted {
+        color: var(--ink);
+      }
+      thead th .sort-ind {
+        display: inline-block;
+        width: 8px;
+        margin-left: 4px;
+        color: var(--accent);
+        font-size: 9px;
+      }
+      tbody td {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        color: var(--ink);
+      }
+      tbody td.r {
+        text-align: right;
+      }
+      tbody tr.row-project {
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      tbody tr.row-project:hover {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      tbody tr.row-project.expanded td {
+        background: var(--panel-2);
+      }
+      tbody tr.row-project.expanded td:first-child {
+        box-shadow: inset 2px 0 0 var(--accent);
+      }
+      .chevron {
+        display: inline-block;
+        width: 12px;
+        margin-right: 6px;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1;
+        transition: transform 0.15s;
+      }
+      tr.expanded .chevron {
+        transform: rotate(90deg);
+        color: var(--ink);
+      }
+      .project-name {
+        font-weight: 600;
+        max-width: 360px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .pill-active {
+        background: rgba(16, 185, 129, 0.16);
+        color: #10b981;
+      }
+      .pill-idle {
+        background: rgba(148, 163, 184, 0.16);
+        color: #94a3b8;
+      }
+      .empty {
+        color: var(--muted);
+      }
+      .err {
+        padding: 12px 16px;
+        border: 1px solid #ef4444;
+        border-radius: 12px;
+        color: #ef4444;
+        background: rgba(239, 68, 68, 0.08);
+        margin-bottom: 12px;
+      }
+      /* === Detail (expandable) === */
+      tbody tr.detail-row[hidden] {
+        display: none;
+      }
+      tbody tr.detail-row > td.detail-cell {
+        padding: 0;
+        background: transparent;
+      }
+      .detail-inner {
+        padding: 16px 22px 20px;
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        grid-template-rows: auto 1fr;
+        column-gap: 18px;
+        row-gap: 10px;
+        align-items: stretch;
+      }
+      .detail-header {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .detail-header strong {
+        color: var(--ink);
+        font-weight: 700;
+      }
+      .day-grid {
+        grid-column: 1;
+        grid-row: 2;
+        align-self: end;
+      }
+      .hour-chart {
+        grid-column: 2;
+        grid-row: 2;
+        min-width: 0;
+      }
+      /* 5 rows (weeks) x 7 cols (days) */
+      .day-grid-cells {
+        display: grid;
+        grid-template-rows: repeat(4, 18px) 14px;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 3px;
+        width: 100%;
+        padding-bottom: 6px;
+      }
+      .day-cell {
+        width: 100%;
+        height: 18px;
+        border-radius: 1px;
+        background: rgba(255, 255, 255, 0.14);
+        cursor: pointer;
+        transition: filter 0.1s;
+        position: relative;
+      }
+      .day-cell:hover {
+        filter: brightness(1.35);
+      }
+      /* Future day (after today, in the current week) — dashed outline, not clickable. */
+      .day-cell.future {
+        background: transparent;
+        border: 1px dashed rgba(255, 255, 255, 0.4);
+        cursor: default;
+        opacity: 1;
+      }
+      .day-cell.future:hover {
+        filter: none;
+      }
+      /* Today indicator — small white dot in the top-right corner of today's cell. */
+      .day-cell.is-today::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: #fff;
+      }
+      /* Selected day — white outline (was accent purple; reference uses white). */
+      .day-cell.selected {
+        outline: 1px solid #fff;
+        outline-offset: 1px;
+        z-index: 1;
+      }
+      .day-cell[data-intensity='1'] {
+        background: var(--L1);
+      }
+      .day-cell[data-intensity='2'] {
+        background: var(--L2);
+      }
+      .day-cell[data-intensity='3'] {
+        background: var(--L3);
+      }
+      .day-cell[data-intensity='4'] {
+        background: var(--L4);
+        box-shadow: 0 0 6px var(--L4);
+      }
+      .day-label {
+        text-align: center;
+        font-size: 11px;
+        line-height: 14px;
+        color: var(--muted);
+        text-transform: uppercase;
+        font-family: 'JetBrains Mono', 'Roboto Mono', Consolas, monospace;
+      }
+      /* === 24h chart (inline) === */
+      .hours-24h {
+        display: grid;
+        grid-template-columns: repeat(24, 1fr);
+        gap: 4px;
+      }
+      .hour-cell {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 6px;
+        min-height: 110px;
+      }
+      .bar-24h {
+        width: 100%;
+        flex: 0 1 auto;
+        align-self: end;
+        border-radius: 6px 6px 2px 2px;
+        min-height: 2px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        transition: filter 0.15s ease;
+      }
+      .bar-24h:hover {
+        filter: brightness(1.18);
+      }
+      .bar-24h.active,
+      .bar-24h.peak,
+      .bar-24h.current {
+        --bar-in: #4a5070;
+        --bar-out: #216e39;
+      }
+      .bar-24h.peak {
+        box-shadow: none;
+      }
+      .bar-24h.current {
+        outline: 1px solid rgba(255, 255, 255, 0.55);
+        outline-offset: -1px;
+      }
+      .bar-24h.future {
+        height: 6px !important;
+        background: transparent;
+        border: 1px dashed rgba(255, 255, 255, 0.18);
+        box-shadow: none;
+        opacity: 0.55;
+      }
+      .bar-24h.empty {
+        background: rgba(255, 255, 255, 0.06);
+        box-shadow: none;
+      }
+      .hour-label {
+        flex: none;
+        text-align: center;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1;
+      }
+      .hour-label--future {
+        opacity: 0.4;
+      }
+      .peak-value {
+        position: absolute;
+        top: 4px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #e6ebf6;
+        font-size: 12px;
+        line-height: 1.05;
+        pointer-events: none;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+      }
+      .peak-value__sep {
+        width: 70%;
+        height: 1px;
+        background: currentColor;
+        opacity: 0.35;
+      }
+      .peak-value__cost {
+        font-size: 9px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <span>Project Dashboard</span>
+        <span id="updated">—</span>
+        <span>
+          <a href="dashboard.html">Tokens</a>
+          <a href="project-dashboard.html" class="active">Projects</a>
+          <a href="session-dashboard.html">Sessions</a>
+        </span>
       </div>
-      <table>
-        <thead>
-          <tr id="thead-row">
-            <th class="sortable" data-sort-key="project" data-sort-type="str">Project <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="last_update" data-sort-type="str">Last update <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="duration_ms" data-sort-type="num">Duration <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="tokens" data-sort-type="num">Tokens <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="cost_usd" data-sort-type="num">Cost <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="rate" data-sort-type="num">Rate <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="sessions" data-sort-type="num">Sessions <span class="sort-ind"></span></th>
-            <th class="r sortable" data-sort-key="is_active" data-sort-type="bool">Status <span class="sort-ind"></span></th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
+
+      <div id="err"></div>
+
+      <div class="card">
+        <div class="head">
+          <div class="title" id="title">Project Usage</div>
+          <div class="meta" id="meta">—</div>
+        </div>
+        <table>
+          <thead>
+            <tr id="thead-row">
+              <th class="sortable" data-sort-key="project" data-sort-type="str">
+                Project <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="last_update"
+                data-sort-type="str"
+              >
+                Last update <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="duration_ms"
+                data-sort-type="num"
+              >
+                Duration <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="tokens"
+                data-sort-type="num"
+              >
+                Tokens <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="cost_usd"
+                data-sort-type="num"
+              >
+                Cost <span class="sort-ind"></span>
+              </th>
+              <th class="r sortable" data-sort-key="rate" data-sort-type="num">
+                Rate <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="sessions"
+                data-sort-type="num"
+              >
+                Sessions <span class="sort-ind"></span>
+              </th>
+              <th
+                class="r sortable"
+                data-sort-key="is_active"
+                data-sort-type="bool"
+              >
+                Status <span class="sort-ind"></span>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
     </div>
-  </div>
 
-  <script>
-    const API = "http://127.0.0.1:8021";
-    const REFRESH_MS = 5 * 60 * 1000;
+    <script>
+      const API = 'http://127.0.0.1:8021';
+      const REFRESH_MS = 5 * 60 * 1000;
 
-    let state = {
-      projects: [],
-      sortKey: "last_update",
-      sortAsc: false,  // default: newest first
-      expanded: new Set(),  // project slugs currently expanded
-      detailCache: new Map(),  // slug -> detail response
-    };
+      let state = {
+        projects: [],
+        sortKey: 'last_update',
+        sortAsc: false, // default: newest first
+        expanded: new Set(), // project slugs currently expanded
+        detailCache: new Map(), // slug -> detail response
+      };
 
-    function el(id) { return document.getElementById(id); }
-    function setText(id, v) { el(id).textContent = v; }
-    function fmtMsk(iso) { return new Date(iso).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }); }
-    function pad2(n) { return String(n).padStart(2, "0"); }
-    function fmtCompact(n) {
-      if (n == null) return "—";
-      const abs = Math.abs(n);
-      if (abs >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
-      if (abs >= 1_000) return (n / 1_000).toFixed(1) + "K";
-      return String(n);
-    }
-    function fmtCost(usd) { if (usd == null) return "—"; return "$" + usd.toFixed(2); }
-    function fmtInt(n) { return n.toLocaleString("ru-RU"); }
-    function fmtDuration(ms) {
-      if (ms == null) return "—";
-      const s = Math.floor(ms / 1000);
-      const d = Math.floor(s / 86400);
-      const h = Math.floor((s % 86400) / 3600);
-      const m = Math.floor((s % 3600) / 60);
-      if (d > 0) return `${d}d ${h}h`;
-      if (h > 0) return `${h}h ${m}m`;
-      return `${m}m`;
-    }
-    function fmtRate(tokens, durationMs) {
-      if (!durationMs || durationMs <= 0) return "—";
-      return fmtCompact(tokens / (durationMs / 3_600_000)) + "/h";
-    }
-    function fmtDayShort(iso) {
-      const months = ["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
-      const [, m, d] = iso.split("-");
-      return parseInt(d, 10) + " " + months[parseInt(m, 10) - 1];
-    }
-    function escapeHtml(s) {
-      if (s == null) return "";
-      return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    }
+      function el(id) {
+        return document.getElementById(id);
+      }
+      function setText(id, v) {
+        el(id).textContent = v;
+      }
+      function fmtMsk(iso) {
+        return new Date(iso).toLocaleString('ru-RU', {
+          timeZone: 'Europe/Moscow',
+        });
+      }
+      function pad2(n) {
+        return String(n).padStart(2, '0');
+      }
+      function fmtCompact(n) {
+        if (n == null) return '—';
+        const abs = Math.abs(n);
+        if (abs >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+        if (abs >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+        return String(n);
+      }
+      function fmtCost(usd) {
+        if (usd == null) return '—';
+        return '$' + usd.toFixed(2);
+      }
+      function fmtInt(n) {
+        return n.toLocaleString('ru-RU');
+      }
+      function fmtDuration(ms) {
+        if (ms == null) return '—';
+        const s = Math.floor(ms / 1000);
+        const d = Math.floor(s / 86400);
+        const h = Math.floor((s % 86400) / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        if (d > 0) return `${d}d ${h}h`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+      }
+      function fmtRate(tokens, durationMs) {
+        if (!durationMs || durationMs <= 0) return '—';
+        return fmtCompact(tokens / (durationMs / 3_600_000)) + '/h';
+      }
+      function fmtDayShort(iso) {
+        const months = [
+          'янв',
+          'фев',
+          'мар',
+          'апр',
+          'май',
+          'июн',
+          'июл',
+          'авг',
+          'сен',
+          'окт',
+          'ноя',
+          'дек',
+        ];
+        const [, m, d] = iso.split('-');
+        return parseInt(d, 10) + ' ' + months[parseInt(m, 10) - 1];
+      }
+      function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s).replace(
+          /[&<>"']/g,
+          c =>
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[c]
+        );
+      }
 
-    // ---- Sort ----------------------------------------------------------
+      // ---- Sort ----------------------------------------------------------
 
-    function sortProjects() {
-      const { sortKey, sortAsc } = state;
-      const dir = sortAsc ? 1 : -1;
-      state.projects.sort((a, b) => {
-        let av = a[sortKey], bv = b[sortKey];
-        if (sortKey === "rate") {
-          av = a.duration_ms > 0 ? a.tokens / (a.duration_ms / 3_600_000) : 0;
-          bv = b.duration_ms > 0 ? b.tokens / (b.duration_ms / 3_600_000) : 0;
-        }
-        if (typeof av === "string") return av.localeCompare(bv) * dir;
-        return ((av || 0) - (bv || 0)) * dir;
-      });
-    }
+      function sortProjects() {
+        const { sortKey, sortAsc } = state;
+        const dir = sortAsc ? 1 : -1;
+        state.projects.sort((a, b) => {
+          let av = a[sortKey],
+            bv = b[sortKey];
+          if (sortKey === 'rate') {
+            av = a.duration_ms > 0 ? a.tokens / (a.duration_ms / 3_600_000) : 0;
+            bv = b.duration_ms > 0 ? b.tokens / (b.duration_ms / 3_600_000) : 0;
+          }
+          if (typeof av === 'string') return av.localeCompare(bv) * dir;
+          return ((av || 0) - (bv || 0)) * dir;
+        });
+      }
 
-    function updateSortIndicators() {
-      document.querySelectorAll("thead th.sortable").forEach(th => {
-        const ind = th.querySelector(".sort-ind");
-        if (th.dataset.sortKey === state.sortKey) {
-          th.classList.add("sorted");
-          ind.textContent = state.sortAsc ? "▲" : "▼";
-        } else {
-          th.classList.remove("sorted");
-          ind.textContent = "";
-        }
-      });
-    }
+      function updateSortIndicators() {
+        document.querySelectorAll('thead th.sortable').forEach(th => {
+          const ind = th.querySelector('.sort-ind');
+          if (th.dataset.sortKey === state.sortKey) {
+            th.classList.add('sorted');
+            ind.textContent = state.sortAsc ? '▲' : '▼';
+          } else {
+            th.classList.remove('sorted');
+            ind.textContent = '';
+          }
+        });
+      }
 
-    // ---- Table render ---------------------------------------------------
+      // ---- Table render ---------------------------------------------------
 
-    function renderRow(p) {
-      const tr = document.createElement("tr");
-      tr.className = "row-project";
-      tr.dataset.project = p.project;
-      const expanded = state.expanded.has(p.project);
-      if (expanded) tr.classList.add("expanded");
-      tr.innerHTML = `
+      function renderRow(p) {
+        const tr = document.createElement('tr');
+        tr.className = 'row-project';
+        tr.dataset.project = p.project;
+        const expanded = state.expanded.has(p.project);
+        if (expanded) tr.classList.add('expanded');
+        tr.innerHTML = `
         <td><span class="chevron">▶</span><span class="project-name">${escapeHtml(p.project)}</span></td>
-        <td class="r">${p.last_update || "—"}</td>
+        <td class="r">${p.last_update || '—'}</td>
         <td class="r">${fmtDuration(p.duration_ms)}</td>
         <td class="r">${fmtCompact(p.tokens)}</td>
         <td class="r">${fmtCost(p.cost_usd)}</td>
@@ -319,345 +605,378 @@
         <td class="r">${p.sessions}</td>
         <td class="r"><span class="pill ${p.is_active ? 'pill-active' : 'pill-idle'}">${p.is_active ? 'active' : 'idle'}</span></td>
       `;
-      return tr;
-    }
+        return tr;
+      }
 
-    function renderDetailRow(p) {
-      const tr = document.createElement("tr");
-      tr.className = "detail-row";
-      tr.dataset.project = p.project;
-      tr.hidden = !state.expanded.has(p.project);
-      tr.innerHTML = `<td colspan="8" class="detail-cell">
+      function renderDetailRow(p) {
+        const tr = document.createElement('tr');
+        tr.className = 'detail-row';
+        tr.dataset.project = p.project;
+        tr.hidden = !state.expanded.has(p.project);
+        tr.innerHTML = `<td colspan="8" class="detail-cell">
         <div class="detail-inner" id="detail-${p.project}">
           <div class="detail-header">${escapeHtml(p.project)} — <span class="dim">загрузка деталей…</span></div>
         </div>
       </td>`;
-      return tr;
-    }
-
-    function renderTable() {
-      const tbody = el("rows");
-      tbody.innerHTML = "";
-      if (state.projects.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="empty" style="text-align:center;padding:32px">нет проектов в окне</td></tr>`;
-        return;
+        return tr;
       }
-      for (const p of state.projects) {
-        tbody.appendChild(renderRow(p));
-        if (state.expanded.has(p.project)) {
-          tbody.appendChild(renderDetailRow(p));
+
+      function renderTable() {
+        const tbody = el('rows');
+        tbody.innerHTML = '';
+        if (state.projects.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="8" class="empty" style="text-align:center;padding:32px">нет проектов в окне</td></tr>`;
+          return;
+        }
+        for (const p of state.projects) {
+          tbody.appendChild(renderRow(p));
+          if (state.expanded.has(p.project)) {
+            tbody.appendChild(renderDetailRow(p));
+          }
+        }
+        // Re-render details for expanded rows
+        for (const p of state.projects) {
+          if (state.expanded.has(p.project)) {
+            loadAndRenderDetail(p.project);
+          }
         }
       }
-      // Re-render details for expanded rows
-      for (const p of state.projects) {
-        if (state.expanded.has(p.project)) {
-          loadAndRenderDetail(p.project);
+
+      // ---- Detail panel (day grid + 24h) ---------------------------------
+
+      function buildDayGrid(detail, today) {
+        // 28 days, 4 rows (weeks) x 7 cols (Mon..Sun).
+        // The API returns 35 days (5 weeks: 4 finished + current). We display
+        // the 4 most recent (skip the oldest week) to match the reference.
+        // After skipping: i=0 = window.start + 7 days, i=27 = today-or-later.
+        const startDate = new Date(detail.window.start);
+        startDate.setDate(startDate.getDate() + 7);
+        const container = document.createElement('div');
+        container.className = 'day-grid-cells';
+        const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+        for (let i = 0; i < 28; i++) {
+          const cell = document.createElement('div');
+          cell.className = 'day-cell';
+          const d = detail.days[i + 7]; // skip oldest week
+          // Compute the date for this position: i=0 is startDate, i=k is startDate+k days.
+          const cellDate = new Date(startDate);
+          cellDate.setDate(startDate.getDate() + i);
+          const cellDateStr = cellDate.toISOString().slice(0, 10);
+          const isFuture = cellDateStr > today;
+          if (isFuture) {
+            cell.classList.add('future');
+            cell.title = 'будущее';
+          } else if (d) {
+            cell.dataset.date = d.date;
+            cell.dataset.intensity = d.intensity;
+            cell.title = `${fmtDayShort(d.date)}: ${fmtCompact(d.total)} (${fmtCost(d.cost_usd)})`;
+            cell.addEventListener('click', () =>
+              onDayClick(p_slug_for_detail, d.date)
+            );
+            if (cellDateStr === today) cell.classList.add('is-today');
+          } else {
+            cell.style.opacity = '0.2';
+            cell.title = 'нет данных';
+            if (cellDateStr === today) cell.classList.add('is-today');
+          }
+          container.appendChild(cell);
+        }
+        // Day labels row (after 4 data rows)
+        for (let i = 0; i < 7; i++) {
+          const label = document.createElement('div');
+          label.className = 'day-label';
+          label.textContent = dayNames[i];
+          container.appendChild(label);
+        }
+        return container;
+      }
+
+      function build24h(detail, targetDate) {
+        const cells = detail.hours[targetDate];
+        if (!cells) return document.createTextNode('нет данных за этот день');
+        const container = document.createElement('div');
+        container.className = 'hours-24h';
+        const today = detail.now_msk.slice(0, 10);
+        const isToday = targetDate === today;
+        const nowHour = isToday ? new Date(detail.now_msk).getHours() : -1;
+        let max = 0;
+        for (const c of cells) if (c.total > max) max = c.total;
+        let peakHour = -1;
+        for (const c of cells)
+          if (
+            c.total > max * 0.5 &&
+            (peakHour < 0 || c.total > cells[peakHour].total)
+          )
+            peakHour = c.hour;
+        for (const c of cells) {
+          const cell = document.createElement('div');
+          cell.className = 'hour-cell';
+          const bar = document.createElement('div');
+          let stateCls = 'active';
+          if (isToday) {
+            if (c.hour < nowHour) stateCls = 'active';
+            else if (c.hour === nowHour) stateCls = 'current';
+            else stateCls = 'future';
+          }
+          if (c.hour === peakHour && c.total > 0) stateCls = 'peak';
+          if ((stateCls === 'active' || stateCls === 'current') && c.total <= 0)
+            stateCls = 'empty';
+          bar.className = 'bar-24h ' + stateCls;
+          if (c.total > 0) {
+            const pct = max > 0 ? (c.total / max) * 100 : 0;
+            bar.style.height = Math.max(2, pct) + '%';
+            const inShare = ((c.input / c.total) * 100).toFixed(1);
+            bar.style.background = `linear-gradient(to top, var(--bar-in) 0% ${inShare}%, var(--bar-out) ${inShare}% 100%)`;
+          } else {
+            bar.style.height = '0%';
+          }
+          bar.title = `${pad2(c.hour)}:00–${pad2((c.hour + 1) % 24)}:59: ↑${fmtInt(c.input)} · ↓${fmtInt(c.output)} (Σ ${fmtInt(c.total)})`;
+          cell.appendChild(bar);
+          if (c.hour === peakHour && c.total > 0) {
+            const peak = document.createElement('div');
+            peak.className = 'peak-value';
+            const in_t = c.input,
+              out_t = c.output;
+            const cost = (in_t / 1e6) * 0.23 + (out_t / 1e6) * 0.96;
+            peak.innerHTML = `<span>${fmtCompact(c.total)}</span><span class="peak-value__sep"></span><span class="peak-value__cost">${fmtCost(cost)}</span>`;
+            cell.appendChild(peak);
+          }
+          const lbl = document.createElement('span');
+          lbl.className =
+            'hour-label' + (stateCls === 'future' ? ' hour-label--future' : '');
+          lbl.textContent = pad2(c.hour);
+          cell.appendChild(lbl);
+          container.appendChild(cell);
+        }
+        return container;
+      }
+
+      // ---- localStorage: persist selected day per project ----------------
+
+      const SELECTED_DAY_KEY = 'agentdashProjectSelectedDay';
+
+      function saveSelectedDay(slug, date) {
+        try {
+          const all = JSON.parse(
+            localStorage.getItem(SELECTED_DAY_KEY) || '{}'
+          );
+          all[slug] = date;
+          localStorage.setItem(SELECTED_DAY_KEY, JSON.stringify(all));
+        } catch (e) {
+          /* localStorage unavailable — silent */
         }
       }
-    }
-
-    // ---- Detail panel (day grid + 24h) ---------------------------------
-
-    function buildDayGrid(detail, today) {
-      // 28 days, 4 rows (weeks) x 7 cols (Mon..Sun).
-      // The API returns 35 days (5 weeks: 4 finished + current). We display
-      // the 4 most recent (skip the oldest week) to match the reference.
-      // After skipping: i=0 = window.start + 7 days, i=27 = today-or-later.
-      const startDate = new Date(detail.window.start);
-      startDate.setDate(startDate.getDate() + 7);
-      const container = document.createElement("div");
-      container.className = "day-grid-cells";
-      const dayNames = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
-      for (let i = 0; i < 28; i++) {
-        const cell = document.createElement("div");
-        cell.className = "day-cell";
-        const d = detail.days[i + 7];  // skip oldest week
-        // Compute the date for this position: i=0 is startDate, i=k is startDate+k days.
-        const cellDate = new Date(startDate);
-        cellDate.setDate(startDate.getDate() + i);
-        const cellDateStr = cellDate.toISOString().slice(0, 10);
-        const isFuture = cellDateStr > today;
-        if (isFuture) {
-          cell.classList.add("future");
-          cell.title = "будущее";
-        } else if (d) {
-          cell.dataset.date = d.date;
-          cell.dataset.intensity = d.intensity;
-          cell.title = `${fmtDayShort(d.date)}: ${fmtCompact(d.total)} (${fmtCost(d.cost_usd)})`;
-          cell.addEventListener("click", () => onDayClick(p_slug_for_detail, d.date));
-          if (cellDateStr === today) cell.classList.add("is-today");
-        } else {
-          cell.style.opacity = "0.5";
-          cell.title = "нет данных";
-          if (cellDateStr === today) cell.classList.add("is-today");
+      function loadSelectedDay(slug) {
+        try {
+          const all = JSON.parse(
+            localStorage.getItem(SELECTED_DAY_KEY) || '{}'
+          );
+          return all[slug] || null;
+        } catch (e) {
+          return null;
         }
-        container.appendChild(cell);
       }
-      // Day labels row (after 4 data rows)
-      for (let i = 0; i < 7; i++) {
-        const label = document.createElement("div");
-        label.className = "day-label";
-        label.textContent = dayNames[i];
-        container.appendChild(label);
-      }
-      return container;
-    }
 
-    function build24h(detail, targetDate) {
-      const cells = detail.hours[targetDate];
-      if (!cells) return document.createTextNode("нет данных за этот день");
-      const container = document.createElement("div");
-      container.className = "hours-24h";
-      const today = detail.now_msk.slice(0, 10);
-      const isToday = targetDate === today;
-      const nowHour = isToday ? new Date(detail.now_msk).getHours() : -1;
-      let max = 0;
-      for (const c of cells) if (c.total > max) max = c.total;
-      let peakHour = -1;
-      for (const c of cells) if (c.total > max * 0.5 && (peakHour < 0 || c.total > cells[peakHour].total)) peakHour = c.hour;
-      for (const c of cells) {
-        const cell = document.createElement("div");
-        cell.className = "hour-cell";
-        const bar = document.createElement("div");
-        let stateCls = "active";
-        if (isToday) {
-          if (c.hour < nowHour) stateCls = "active";
-          else if (c.hour === nowHour) stateCls = "current";
-          else stateCls = "future";
+      let p_slug_for_detail = null; // which project's detail is being rendered
+
+      function selectDayInGrid(slug, date) {
+        const grid = document.querySelector(`#detail-${slug} .day-grid-cells`);
+        if (!grid) return;
+        grid.querySelectorAll('.day-cell').forEach(c => {
+          c.classList.toggle('selected', c.dataset.date === date);
+        });
+      }
+
+      async function loadAndRenderDetail(slug) {
+        const inner = el(`detail-${slug}`);
+        if (!inner) return;
+        p_slug_for_detail = slug;
+        // Use cache if available
+        if (state.detailCache.has(slug)) {
+          renderDetail(slug, state.detailCache.get(slug));
+          return;
         }
-        if (c.hour === peakHour && c.total > 0) stateCls = "peak";
-        if ((stateCls === "active" || stateCls === "current") && c.total <= 0) stateCls = "empty";
-        bar.className = "bar-24h " + stateCls;
-        if (c.total > 0) {
-          const pct = max > 0 ? (c.total / max) * 100 : 0;
-          bar.style.height = Math.max(2, pct) + "%";
-          const inShare = (c.input / c.total * 100).toFixed(1);
-          bar.style.background = `linear-gradient(to top, var(--bar-in) 0% ${inShare}%, var(--bar-out) ${inShare}% 100%)`;
-        } else {
-          bar.style.height = "0%";
+        try {
+          const r = await fetch(
+            `${API}/api/v1/projects/${encodeURIComponent(slug)}/detail`
+          );
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const detail = await r.json();
+          state.detailCache.set(slug, detail);
+          renderDetail(slug, detail);
+        } catch (e) {
+          const header = inner.querySelector('.detail-header');
+          if (header)
+            header.innerHTML = `<strong>${escapeHtml(slug)}</strong> — <span style="color:#ef4444">fetch failed: ${escapeHtml(e.message)}</span>`;
         }
-        bar.title = `${pad2(c.hour)}:00–${pad2((c.hour+1)%24)}:59: ↑${fmtInt(c.input)} · ↓${fmtInt(c.output)} (Σ ${fmtInt(c.total)})`;
-        cell.appendChild(bar);
-        if (c.hour === peakHour && c.total > 0) {
-          const peak = document.createElement("div");
-          peak.className = "peak-value";
-          const in_t = c.input, out_t = c.output;
-          const cost = (in_t / 1e6) * 0.23 + (out_t / 1e6) * 0.96;
-          peak.innerHTML = `<span>${fmtCompact(c.total)}</span><span class="peak-value__sep"></span><span class="peak-value__cost">${fmtCost(cost)}</span>`;
-          cell.appendChild(peak);
-        }
-        const lbl = document.createElement("span");
-        lbl.className = "hour-label" + (stateCls === "future" ? " hour-label--future" : "");
-        lbl.textContent = pad2(c.hour);
-        cell.appendChild(lbl);
-        container.appendChild(cell);
       }
-      return container;
-    }
 
-    // ---- localStorage: persist selected day per project ----------------
-
-    const SELECTED_DAY_KEY = "agentdashProjectSelectedDay";
-
-    function saveSelectedDay(slug, date) {
-      try {
-        const all = JSON.parse(localStorage.getItem(SELECTED_DAY_KEY) || "{}");
-        all[slug] = date;
-        localStorage.setItem(SELECTED_DAY_KEY, JSON.stringify(all));
-      } catch (e) { /* localStorage unavailable — silent */ }
-    }
-    function loadSelectedDay(slug) {
-      try {
-        const all = JSON.parse(localStorage.getItem(SELECTED_DAY_KEY) || "{}");
-        return all[slug] || null;
-      } catch (e) { return null; }
-    }
-
-    let p_slug_for_detail = null;  // which project's detail is being rendered
-
-    function selectDayInGrid(slug, date) {
-      const grid = document.querySelector(`#detail-${slug} .day-grid-cells`);
-      if (!grid) return;
-      grid.querySelectorAll(".day-cell").forEach(c => {
-        c.classList.toggle("selected", c.dataset.date === date);
-      });
-    }
-
-    async function loadAndRenderDetail(slug) {
-      const inner = el(`detail-${slug}`);
-      if (!inner) return;
-      p_slug_for_detail = slug;
-      // Use cache if available
-      if (state.detailCache.has(slug)) {
-        renderDetail(slug, state.detailCache.get(slug));
-        return;
-      }
-      try {
-        const r = await fetch(`${API}/api/v1/projects/${encodeURIComponent(slug)}/detail`);
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const detail = await r.json();
-        state.detailCache.set(slug, detail);
-        renderDetail(slug, detail);
-      } catch (e) {
-        const header = inner.querySelector(".detail-header");
-        if (header) header.innerHTML = `<strong>${escapeHtml(slug)}</strong> — <span style="color:#ef4444">fetch failed: ${escapeHtml(e.message)}</span>`;
-      }
-    }
-
-    function renderDetail(slug, detail) {
-      const inner = el(`detail-${slug}`);
-      if (!inner) return;
-      const todayStr = detail.now_msk.slice(0, 10);
-      const activeDays = detail.days.filter(d => d !== null);
-      const activeDates = activeDays.map(d => d.date);
-      // Pick selected day: saved-in-localStorage (if still valid for this window),
-      // else today if today has data, else latest active day, else today.
-      const saved = loadSelectedDay(slug);
-      const savedValid = saved && activeDates.includes(saved);
-      const todayActive = activeDates.includes(todayStr);
-      const latestActive = activeDates[activeDates.length - 1];
-      const selectedDate = savedValid
-        ? saved
-        : (todayActive ? todayStr : (latestActive || todayStr));
-
-      inner.innerHTML = "";
-      // Header
-      const header = document.createElement("div");
-      header.className = "detail-header";
-      header.innerHTML = `<strong>${activeDates.length}</strong> ДНЕЙ · `
-        + `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>`
-        + ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
-      inner.appendChild(header);
-
-      // Day grid
-      const gridCell = document.createElement("div");
-      gridCell.className = "day-grid";
-      p_slug_for_detail = slug;
-      const grid = buildDayGrid(detail, todayStr);
-      // Mark selected
-      const firstDateCell = grid.querySelector(`.day-cell[data-date="${selectedDate}"]`);
-      if (firstDateCell) firstDateCell.classList.add("selected");
-      gridCell.appendChild(grid);
-      inner.appendChild(gridCell);
-
-      // 24h chart
-      const chartCell = document.createElement("div");
-      chartCell.className = "hour-chart";
-      chartCell.appendChild(build24h(detail, selectedDate));
-      inner.appendChild(chartCell);
-    }
-
-    function getDayTotal(detail, date) {
-      const d = detail.days.find(x => x && x.date === date);
-      return d ? d.total : 0;
-    }
-    function getDayCost(detail, date) {
-      const d = detail.days.find(x => x && x.date === date);
-      return d ? d.cost_usd : 0;
-    }
-
-    function onDayClick(slug, date) {
-      const detail = state.detailCache.get(slug);
-      if (!detail) return;
-      saveSelectedDay(slug, date);
-      selectDayInGrid(slug, date);
-      // Re-render 24h for new date
-      const inner = el(`detail-${slug}`);
-      const chartCell = inner.querySelector(".hour-chart");
-      if (chartCell) {
-        chartCell.innerHTML = "";
-        chartCell.appendChild(build24h(detail, date));
-      }
-      // Update header (day name + cost)
-      const header = inner.querySelector(".detail-header");
-      if (header) {
+      function renderDetail(slug, detail) {
+        const inner = el(`detail-${slug}`);
+        if (!inner) return;
+        const todayStr = detail.now_msk.slice(0, 10);
         const activeDays = detail.days.filter(d => d !== null);
         const activeDates = activeDays.map(d => d.date);
-        header.innerHTML = `<strong>${activeDates.length}</strong> ДНЕЙ · `
-          + `<span>ДЕНЬ <strong>${fmtDayShort(date).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, date))} / ${fmtCost(getDayCost(detail, date))})</span>`
-          + ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
+        // Pick selected day: saved-in-localStorage (if still valid for this window),
+        // else today if today has data, else latest active day, else today.
+        const saved = loadSelectedDay(slug);
+        const savedValid = saved && activeDates.includes(saved);
+        const todayActive = activeDates.includes(todayStr);
+        const latestActive = activeDates[activeDates.length - 1];
+        const selectedDate = savedValid
+          ? saved
+          : todayActive
+            ? todayStr
+            : latestActive || todayStr;
+
+        inner.innerHTML = '';
+        // Header
+        const header = document.createElement('div');
+        header.className = 'detail-header';
+        header.innerHTML =
+          `<strong>${activeDates.length}</strong> ДНЕЙ · ` +
+          `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>` +
+          ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
+        inner.appendChild(header);
+
+        // Day grid
+        const gridCell = document.createElement('div');
+        gridCell.className = 'day-grid';
+        p_slug_for_detail = slug;
+        const grid = buildDayGrid(detail, todayStr);
+        // Mark selected
+        const firstDateCell = grid.querySelector(
+          `.day-cell[data-date="${selectedDate}"]`
+        );
+        if (firstDateCell) firstDateCell.classList.add('selected');
+        gridCell.appendChild(grid);
+        inner.appendChild(gridCell);
+
+        // 24h chart
+        const chartCell = document.createElement('div');
+        chartCell.className = 'hour-chart';
+        chartCell.appendChild(build24h(detail, selectedDate));
+        inner.appendChild(chartCell);
       }
-    }
 
-    // ---- Main refresh ---------------------------------------------------
-
-    async function refreshTable() {
-      try {
-        const r = await fetch(API + "/api/v1/projects/snapshot");
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const data = await r.json();
-        el("err").innerHTML = "";
-
-        setText("updated", "Обновлено: " + fmtMsk(data.now_msk));
-        setText("meta", data.window.start + " — " + data.window.end);
-        document.title = "Project Dashboard — " + fmtMsk(data.now_msk);
-
-        // Decorate projects with computed rate
-        state.projects = data.projects.map(p => ({ ...p }));
-        sortProjects();
-        updateSortIndicators();
-        renderTable();
-      } catch (e) {
-        el("err").innerHTML = `<div class="err">fetch failed: ${e.message} — is the service running on ${API}?</div>`;
-        setText("updated", "—");
+      function getDayTotal(detail, date) {
+        const d = detail.days.find(x => x && x.date === date);
+        return d ? d.total : 0;
       }
-    }
+      function getDayCost(detail, date) {
+        const d = detail.days.find(x => x && x.date === date);
+        return d ? d.cost_usd : 0;
+      }
 
-    // ---- Event wiring ---------------------------------------------------
-
-    document.querySelectorAll("thead th.sortable").forEach(th => {
-      th.addEventListener("click", () => {
-        const key = th.dataset.sortKey;
-        if (state.sortKey === key) {
-          state.sortAsc = !state.sortAsc;
-        } else {
-          state.sortKey = key;
-          state.sortAsc = (th.dataset.sortType === "str");  // strings start asc
+      function onDayClick(slug, date) {
+        const detail = state.detailCache.get(slug);
+        if (!detail) return;
+        saveSelectedDay(slug, date);
+        selectDayInGrid(slug, date);
+        // Re-render 24h for new date
+        const inner = el(`detail-${slug}`);
+        const chartCell = inner.querySelector('.hour-chart');
+        if (chartCell) {
+          chartCell.innerHTML = '';
+          chartCell.appendChild(build24h(detail, date));
         }
-        sortProjects();
-        updateSortIndicators();
-        renderTable();
-      });
-    });
-
-    // Row click (delegation) — single-expand behavior.
-    //   - Click on the currently-expanded row → close it (remove detail-row)
-    //   - Click on a different row → close ALL others, open this one (insert new detail-row)
-    // We remove the detail-row from the DOM on close (not just hide), so the next
-    // open always inserts a fresh node — no stale "expanded class but no body" state.
-    el("rows").addEventListener("click", e => {
-      const tr = e.target.closest("tr.row-project");
-      if (!tr) return;
-      const slug = tr.dataset.project;
-
-      if (state.expanded.has(slug)) {
-        // Close the currently-expanded row
-        state.expanded.delete(slug);
-        tr.classList.remove("expanded");
-        const next = tr.nextElementSibling;
-        if (next && next.classList.contains("detail-row")) next.remove();
-        return;
+        // Update header (day name + cost)
+        const header = inner.querySelector('.detail-header');
+        if (header) {
+          const activeDays = detail.days.filter(d => d !== null);
+          const activeDates = activeDays.map(d => d.date);
+          header.innerHTML =
+            `<strong>${activeDates.length}</strong> ДНЕЙ · ` +
+            `<span>ДЕНЬ <strong>${fmtDayShort(date).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, date))} / ${fmtCost(getDayCost(detail, date))})</span>` +
+            ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
+        }
       }
 
-      // Close any other expanded rows (single-expand: only one at a time)
-      document.querySelectorAll("tr.row-project.expanded").forEach(otherRow => {
-        otherRow.classList.remove("expanded");
-        const otherNext = otherRow.nextElementSibling;
-        if (otherNext && otherNext.classList.contains("detail-row")) otherNext.remove();
-        const otherSlug = otherRow.dataset.project;
-        if (otherSlug) state.expanded.delete(otherSlug);
+      // ---- Main refresh ---------------------------------------------------
+
+      async function refreshTable() {
+        try {
+          const r = await fetch(API + '/api/v1/projects/snapshot');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const data = await r.json();
+          el('err').innerHTML = '';
+
+          setText('updated', 'Обновлено: ' + fmtMsk(data.now_msk));
+          setText('meta', data.window.start + ' — ' + data.window.end);
+          document.title = 'Project Dashboard — ' + fmtMsk(data.now_msk);
+
+          // Decorate projects with computed rate
+          state.projects = data.projects.map(p => ({ ...p }));
+          sortProjects();
+          updateSortIndicators();
+          renderTable();
+        } catch (e) {
+          el('err').innerHTML =
+            `<div class="err">fetch failed: ${e.message} — is the service running on ${API}?</div>`;
+          setText('updated', '—');
+        }
+      }
+
+      // ---- Event wiring ---------------------------------------------------
+
+      document.querySelectorAll('thead th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const key = th.dataset.sortKey;
+          if (state.sortKey === key) {
+            state.sortAsc = !state.sortAsc;
+          } else {
+            state.sortKey = key;
+            state.sortAsc = th.dataset.sortType === 'str'; // strings start asc
+          }
+          sortProjects();
+          updateSortIndicators();
+          renderTable();
+        });
       });
 
-      // Open this one
-      state.expanded.add(slug);
-      tr.classList.add("expanded");
-      const detailTr = renderDetailRow(state.projects.find(p => p.project === slug));
-      tr.after(detailTr);
-      loadAndRenderDetail(slug);
-    });
+      // Row click (delegation) — single-expand behavior.
+      //   - Click on the currently-expanded row → close it (remove detail-row)
+      //   - Click on a different row → close ALL others, open this one (insert new detail-row)
+      // We remove the detail-row from the DOM on close (not just hide), so the next
+      // open always inserts a fresh node — no stale "expanded class but no body" state.
+      el('rows').addEventListener('click', e => {
+        const tr = e.target.closest('tr.row-project');
+        if (!tr) return;
+        const slug = tr.dataset.project;
 
-    refreshTable();
-    setInterval(refreshTable, REFRESH_MS);
-  </script>
-</body>
+        if (state.expanded.has(slug)) {
+          // Close the currently-expanded row
+          state.expanded.delete(slug);
+          tr.classList.remove('expanded');
+          const next = tr.nextElementSibling;
+          if (next && next.classList.contains('detail-row')) next.remove();
+          return;
+        }
+
+        // Close any other expanded rows (single-expand: only one at a time)
+        document
+          .querySelectorAll('tr.row-project.expanded')
+          .forEach(otherRow => {
+            otherRow.classList.remove('expanded');
+            const otherNext = otherRow.nextElementSibling;
+            if (otherNext && otherNext.classList.contains('detail-row'))
+              otherNext.remove();
+            const otherSlug = otherRow.dataset.project;
+            if (otherSlug) state.expanded.delete(otherSlug);
+          });
+
+        // Open this one
+        state.expanded.add(slug);
+        tr.classList.add('expanded');
+        const detailTr = renderDetailRow(
+          state.projects.find(p => p.project === slug)
+        );
+        tr.after(detailTr);
+        loadAndRenderDetail(slug);
+      });
+
+      refreshTable();
+      setInterval(refreshTable, REFRESH_MS);
+    </script>
+  </body>
 </html>
