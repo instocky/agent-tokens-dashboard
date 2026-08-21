@@ -520,7 +520,7 @@
       const header = document.createElement("div");
       header.className = "detail-header";
       header.innerHTML = `<strong>${activeDates.length}</strong> ДНЕЙ · `
-        + `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>`
+        + `<span>ДЕНЬ <strong>${fmtDayShort(selectedDate).toUpperCase()}</strong> (${fmtCompact(getDayTotal(detail, selectedDate))} / ${fmtCost(getDayCost(detail, selectedDate))})</span>`
         + ` <span style="margin-left:8px;opacity:0.6">1 клик по дню → 24h</span>`;
       inner.appendChild(header);
 
