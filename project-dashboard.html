@@ -561,26 +561,40 @@
       });
     });
 
-    // Row click (delegation) — toggle expansion
+    // Row click (delegation) — single-expand behavior.
+    //   - Click on the currently-expanded row → close it (remove detail-row)
+    //   - Click on a different row → close ALL others, open this one (insert new detail-row)
+    // We remove the detail-row from the DOM on close (not just hide), so the next
+    // open always inserts a fresh node — no stale "expanded class but no body" state.
     el("rows").addEventListener("click", e => {
       const tr = e.target.closest("tr.row-project");
       if (!tr) return;
       const slug = tr.dataset.project;
+
       if (state.expanded.has(slug)) {
+        // Close the currently-expanded row
         state.expanded.delete(slug);
-      } else {
-        state.expanded.add(slug);
+        tr.classList.remove("expanded");
+        const next = tr.nextElementSibling;
+        if (next && next.classList.contains("detail-row")) next.remove();
+        return;
       }
-      tr.classList.toggle("expanded");
-      // Insert/remove detail row right after the clicked row
-      const existing = tr.nextElementSibling;
-      if (existing && existing.classList.contains("detail-row") && existing.dataset.project === slug) {
-        existing.hidden = true;
-      } else {
-        const detailTr = renderDetailRow(state.projects.find(p => p.project === slug));
-        tr.after(detailTr);
-        loadAndRenderDetail(slug);
-      }
+
+      // Close any other expanded rows (single-expand: only one at a time)
+      document.querySelectorAll("tr.row-project.expanded").forEach(otherRow => {
+        otherRow.classList.remove("expanded");
+        const otherNext = otherRow.nextElementSibling;
+        if (otherNext && otherNext.classList.contains("detail-row")) otherNext.remove();
+        const otherSlug = otherRow.dataset.project;
+        if (otherSlug) state.expanded.delete(otherSlug);
+      });
+
+      // Open this one
+      state.expanded.add(slug);
+      tr.classList.add("expanded");
+      const detailTr = renderDetailRow(state.projects.find(p => p.project === slug));
+      tr.after(detailTr);
+      loadAndRenderDetail(slug);
     });
 
     refreshTable();
