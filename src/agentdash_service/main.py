@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -28,6 +29,15 @@ app = FastAPI(
     title="agentdash-service",
     version=__version__,
     description="Read-only HTTP API for token-usage dashboards",
+)
+
+# Local-only CORS so the HTML dashboards (opened from file://) can
+# fetch the JSON snapshots. Single user — open is fine.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
 )
 
 app.include_router(tokens_router.router)

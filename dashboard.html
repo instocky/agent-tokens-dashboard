@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #181b22;
+      --panel-2: #1d2129;
+      --ink: #f5f7fb;
+      --muted: rgba(216, 223, 236, 0.62);
+      --line: rgba(255, 255, 255, 0.05);
+      --accent: #8b5cf6;
+      --accent-2: #10b981;
+      --warn: #f59e0b;
+      --over: #ef4444;
+      --L0: #ebedf0;
+      --L1: #9be9a8;
+      --L2: #40c463;
+      --L3: #30a14e;
+      --L4: #216e39;
+      --PEAK: #00d97e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI Variable", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(139, 92, 246, 0.16), transparent 26%),
+        linear-gradient(180deg, #0e1014 0%, #11141a 100%);
+      min-height: 100vh;
+    }
+    .shell { width: min(1280px, calc(100vw - 36px)); margin: 24px auto 36px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center; gap: 16px;
+      margin-bottom: 16px; color: var(--muted);
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em;
+    }
+    .topbar a { color: inherit; text-decoration: none; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); }
+    .topbar a.active { color: var(--ink); border-color: var(--accent); }
+    .panel { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); padding: 24px 28px; margin-bottom: 18px; }
+    .panel h2 { margin: 0 0 16px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .big { font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace; font-size: 32px; font-weight: 700; }
+    .sub { font-size: 12px; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+    .row { display: flex; gap: 18px; flex-wrap: wrap; }
+    .stat { flex: 1 1 120px; }
+    .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 4px; }
+    .stat .val { font-family: "JetBrains Mono", monospace; font-size: 18px; font-weight: 600; }
+    .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+    .pill-ok { background: rgba(16, 185, 129, 0.16); color: #10b981; }
+    .pill-warn { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
+    .pill-over { background: rgba(239, 68, 68, 0.16); color: var(--over); }
+    .hourly { display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px; align-items: end; height: 80px; }
+    .hour-bar { background: var(--L0); border-radius: 4px 4px 0 0; min-height: 4px; transition: opacity .2s; position: relative; }
+    .hour-bar.is-current { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .hour-bar[data-intensity="L1"] { background: var(--L1); }
+    .hour-bar[data-intensity="L2"] { background: var(--L2); }
+    .hour-bar[data-intensity="L3"] { background: var(--L3); }
+    .hour-bar[data-intensity="L4"] { background: var(--L4); }
+    .hour-bar[data-intensity="PEAK"] { background: var(--PEAK); box-shadow: 0 0 8px var(--PEAK); }
+    .hour-bar[title]:hover { opacity: 0.7; }
+    .hour-labels { display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px; font-size: 9px; color: var(--muted); text-align: center; margin-top: 4px; font-family: "JetBrains Mono", monospace; }
+    .hour-labels span.is-current { color: var(--accent); font-weight: 700; }
+    .windows { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    .window-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--panel-2); }
+    .window-card.is-current { border-color: var(--accent); }
+    .window-card .name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+    .window-card .label { font-size: 11px; color: var(--muted); font-family: "JetBrains Mono", monospace; margin-bottom: 6px; }
+    .window-card .total { font-size: 18px; font-weight: 700; font-family: "JetBrains Mono", monospace; }
+    .window-card .cost { font-size: 11px; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+    .weeks { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+    .week { border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--panel-2); }
+    .week.is-current { border-color: var(--accent); }
+    .week .label { font-size: 11px; color: var(--muted); font-family: "JetBrains Mono", monospace; margin-bottom: 6px; }
+    .week .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; aspect-ratio: 7 / 1; }
+    .week .day { background: var(--L0); border-radius: 2px; min-height: 0; }
+    .week .day[data-intensity="L1"] { background: var(--L1); }
+    .week .day[data-intensity="L2"] { background: var(--L2); }
+    .week .day[data-intensity="L3"] { background: var(--L3); }
+    .week .day[data-intensity="L4"] { background: var(--L4); }
+    .week .day[data-intensity="PEAK"] { background: var(--PEAK); }
+    .week .day.empty { background: rgba(255,255,255,0.04); }
+    .err { padding: 12px 16px; border: 1px solid var(--over); border-radius: 12px; color: var(--over); background: rgba(239, 68, 68, 0.08); }
+    .muted { color: var(--muted); }
+    .session-meta { font-size: 12px; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <span>Token Dashboard</span>
+      <span class="muted" id="updated">—</span>
+      <span>
+        <a href="dashboard.html" class="active">Tokens</a>
+        <a href="project-dashboard.html">Projects</a>
+        <a href="session-dashboard.html">Sessions</a>
+      </span>
+    </div>
+
+    <div id="err"></div>
+
+    <div class="panel">
+      <h2>Сейчас</h2>
+      <div class="grid-2">
+        <div>
+          <div class="sub" id="now-project">—</div>
+          <div class="big" id="now-total">—</div>
+          <div class="sub" id="now-cost">—</div>
+        </div>
+        <div>
+          <div class="row">
+            <div class="stat">
+              <div class="label">Session</div>
+              <div class="val" id="now-sid">—</div>
+            </div>
+            <div class="stat">
+              <div class="label">Requests</div>
+              <div class="val" id="now-requests">—</div>
+            </div>
+            <div class="stat">
+              <div class="label">Duration</div>
+              <div class="val" id="now-duration">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Сегодня</h2>
+      <div class="row" style="margin-bottom: 16px;">
+        <div class="stat">
+          <div class="label">Tokens</div>
+          <div class="val" id="today-total">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Cost</div>
+          <div class="val" id="today-cost">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Sessions</div>
+          <div class="val" id="today-sessions">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">User messages</div>
+          <div class="val" id="today-msgs">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Avg req / session</div>
+          <div class="val" id="today-avg">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Peak hour</div>
+          <div class="val" id="today-peak">—</div>
+        </div>
+      </div>
+      <div class="hourly" id="hourly"></div>
+      <div class="hour-labels" id="hour-labels"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Окна дня</h2>
+      <div class="windows" id="windows"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Недели</h2>
+      <div class="row" style="margin-bottom: 14px;">
+        <div class="stat">
+          <div class="label">Cap</div>
+          <div class="val" id="weekly-cap">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Spent (current week)</div>
+          <div class="val" id="weekly-spent">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Threshold (per day)</div>
+          <div class="val" id="weekly-threshold">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Days left</div>
+          <div class="val" id="weekly-days-left">—</div>
+        </div>
+      </div>
+      <div class="weeks" id="weeks"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = "http://127.0.0.1:8021";
+    const REFRESH_MS = 5 * 60 * 1000;  // 5 min
+
+    function fmtNum(n) { return n.toLocaleString("ru-RU"); }
+    function fmtMsk(iso) { return new Date(iso).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }); }
+    function fmtDuration(ms) {
+      if (ms == null) return "—";
+      const s = Math.floor(ms / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${sec}s`;
+      return `${sec}s`;
+    }
+    function fmtCost(usd) { return "$" + usd.toFixed(2); }
+    function fmtCompact(n) {
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+      if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+      return String(n);
+    }
+
+    function el(id) { return document.getElementById(id); }
+    function setText(id, v) { el(id).textContent = v; }
+
+    function renderHourly(bars, currentHour) {
+      const container = el("hourly");
+      container.innerHTML = "";
+      const maxTotal = Math.max(1, ...bars.map(b => b.total));
+      for (const b of bars) {
+        const div = document.createElement("div");
+        div.className = "hour-bar";
+        if (b.hour === currentHour) div.classList.add("is-current");
+        const h = b.total === 0 ? 4 : Math.max(4, Math.round((b.total / maxTotal) * 76));
+        div.style.height = h + "px";
+        div.dataset.intensity = b.intensity;
+        div.title = `${String(b.hour).padStart(2,"0")}:00 — ${fmtCompact(b.total)} ($${b.cost_usd.toFixed(4)})`;
+        container.appendChild(div);
+      }
+      const labels = el("hour-labels");
+      labels.innerHTML = "";
+      for (let h = 0; h < 24; h++) {
+        const span = document.createElement("span");
+        span.textContent = h % 3 === 0 ? String(h).padStart(2, "0") : "";
+        if (h === currentHour) span.classList.add("is-current");
+        labels.appendChild(span);
+      }
+    }
+
+    function renderWindows(windows) {
+      const container = el("windows");
+      container.innerHTML = "";
+      for (const w of windows) {
+        const card = document.createElement("div");
+        card.className = "window-card" + (w.is_current ? " is-current" : "");
+        card.innerHTML = `
+          <div class="name">${w.name}</div>
+          <div class="label">${w.label}</div>
+          <div class="total">${fmtCompact(w.total)}</div>
+          <div class="cost">${fmtCost(w.cost_usd)}</div>
+        `;
+        container.appendChild(card);
+      }
+    }
+
+    function renderWeeks(weeks) {
+      const container = el("weeks");
+      container.innerHTML = "";
+      for (const w of weeks) {
+        const wk = document.createElement("div");
+        wk.className = "week" + (w.is_current ? " is-current" : "");
+        const daysHtml = w.days.map(d => {
+          if (d === null) return '<div class="day empty"></div>';
+          // crude intensity — log-scaled from total
+          const logT = Math.log10(Math.max(1, d.total));
+          let level = "empty";
+          if (logT >= 6) level = "L4";
+          else if (logT >= 5) level = "L3";
+          else if (logT >= 4) level = "L2";
+          else if (logT >= 3) level = "L1";
+          return `<div class="day" data-intensity="${level}" title="${d.date}: ${fmtCompact(d.total)} (${fmtCost(d.cost_usd)})"></div>`;
+        }).join("");
+        wk.innerHTML = `<div class="label">${w.label}</div><div class="days">${daysHtml}</div>`;
+        container.appendChild(wk);
+      }
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch(API + "/api/v1/tokens/snapshot");
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        el("err").innerHTML = "";
+
+        // now_msk header
+        setText("updated", "обновлено " + fmtMsk(data.now_msk));
+
+        // Сейчас
+        if (data.now_session) {
+          const s = data.now_session;
+          setText("now-project", s.project || s.path || "—");
+          setText("now-total", fmtCompact(s.tokens.total) + " tok");
+          setText("now-cost", fmtCost(s.tokens.cost_usd) + " · " + (s.title || "—"));
+          setText("now-sid", s.session_id.slice(0, 16) + "…");
+          setText("now-requests", String(s.user_requests));
+          setText("now-duration", fmtDuration(s.duration_ms));
+        } else {
+          setText("now-project", "no activity today");
+          setText("now-total", "—");
+          setText("now-cost", "—");
+          setText("now-sid", "—");
+          setText("now-requests", "—");
+          setText("now-duration", "—");
+        }
+
+        // Сегодня
+        const t = data.today;
+        setText("today-total", fmtCompact(t.totals.total));
+        setText("today-cost", fmtCost(t.totals.cost_usd));
+        setText("today-sessions", String(t.meta.sessions));
+        setText("today-msgs", String(t.meta.user_messages));
+        setText("today-avg", t.meta.avg_requests_per_session.toFixed(1));
+        setText("today-peak", t.peak_hour ? String(t.peak_hour.hour).padStart(2,"0") + ":00 (" + fmtCompact(t.peak_hour.tokens) + ")" : "—");
+        const nowDate = new Date(data.now_msk);
+        renderHourly(t.hourly, nowDate.getHours());
+
+        // Окна
+        renderWindows(t.windows);
+
+        // Недели
+        const w = data.weekly;
+        setText("weekly-cap", fmtCompact(w.cap_tokens));
+        setText("weekly-spent", fmtCompact(w.weekly_spent_tokens));
+        setText("weekly-threshold", w.threshold_tokens != null ? fmtCompact(w.threshold_tokens) : "—");
+        setText("weekly-days-left", String(w.days_left));
+        renderWeeks(w.weeks);
+      } catch (e) {
+        el("err").innerHTML = `<div class="err">fetch failed: ${e.message} — is the service running on ${API}?</div>`;
+        setText("updated", "—");
+      }
+    }
+
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
