@@ -10,8 +10,7 @@ no auth.
 
 Open any of the three HTML files directly in a browser (`file://`) — it
 fetches the JSON over loopback. The service auto-starts on logon via a
-Windows Task Scheduler entry (Phase 7 — see "Auto-start" below). Until
-that's registered, start the service by hand.
+Windows Task Scheduler entry (see "Auto-start" below).
 
 > Looking for architecture deep-dive, request lifecycle, and module layout?
 > See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
@@ -224,19 +223,45 @@ If port `8021` is already in use you'll see `WinError 10048` on startup
 
 ---
 
-## Auto-start (Windows Task Scheduler — Phase 7)
+## Auto-start (Windows Task Scheduler)
 
-Currently **manual**. The Phase 7 deliverable is an `AtLogOn` scheduled
-task that runs:
+Wired to **AtLogOn** via a single scheduled task. Three files in
+`scripts/`:
+
+| File | Role |
+| ---- | ---- |
+| `run-service.cmd`     | thin wrapper, redirects stdout+stderr to log |
+| `register-task.ps1`   | idempotent, self-elevates via UAC |
+| `unregister-task.ps1` | idempotent rollback, self-elevates via UAC |
+
+Install:
 
 ```powershell
-uv run uvicorn agentdash_service.main:app --host 127.0.0.1 --port 8021
+powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1
+# (one UAC prompt, then: registered 'agentdash-service' (AtLogOn -> ...\run-service.cmd))
 ```
 
-in the project working directory, with uvicorn logs going to
-`%LOCALAPPDATA%\agentdash-service\service.log`. Until that's registered,
-start the service by hand after each reboot (see "Local development"
-above).
+Verify:
+
+```powershell
+Get-ScheduledTask -TaskName 'agentdash-service'   # State = Ready
+Get-NetTCPConnection -LocalPort 8021 -State Listen
+Get-Content "$env:LOCALAPPDATA\agentdash-service\service.log"
+```
+
+Remove:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
+```
+
+`register-task.ps1` refuses to overwrite an existing task and refuses
+to register while port 8021 is already bound — that catches a manual
+uvicorn left running so we don't silently double-bind. Unregister is a
+no-op if the task is gone.
+
+Full task definition (trigger, principal, restart policy, log path) is
+in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) §13.
 
 The two-tier refresh model from the static-build days no longer applies
 in full:
@@ -299,6 +324,10 @@ agentdash-service/
 │   │   └── project.py             #     per-project detail (5w grid + 24h)
 │   └── models/                    #   Pydantic v2 response schemas
 ├── tests/                         # pytest, 15 tests
+├── scripts/                       # Windows Task Scheduler install/remove
+│   ├── run-service.cmd            #   log-redirecting wrapper
+│   ├── register-task.ps1          #   self-elevating, idempotent
+│   └── unregister-task.ps1        #   self-elevating, idempotent
 ├── docs/
 │   ├── ARCHITECTURE.md            # architecture deep-dive, layers, lifecycle
 │   └── API_CONTRACT.md            # endpoint shapes, DB schema, env vars

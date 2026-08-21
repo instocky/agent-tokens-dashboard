@@ -257,19 +257,66 @@ own imports.
 
 ## 13. Deployment
 
-Manual today. Phase 7 (pending) wires an **AtLogon** Windows Task
-Scheduler entry that runs:
+Windows-only, single-user, loopback. The service is wired to start
+**at logon** via Windows Task Scheduler — no `nssm` / `sc.exe` / NSSM.
+
+### 13.1 Files
+
+| File | Role |
+| ---- | ---- |
+| `scripts/run-service.cmd`     | thin wrapper: `cd` to project, `uv run uvicorn ... >> log 2>&1` |
+| `scripts/register-task.ps1`   | idempotent register of the `agentdash-service` task (self-elevates via UAC) |
+| `scripts/unregister-task.ps1` | idempotent rollback (self-elevates via UAC) |
+
+The .cmd wrapper is the only place log redirection lives; the .ps1
+scripts stay readable.
+
+### 13.2 Task definition
+
+| Setting        | Value                                                              |
+| -------------- | ------------------------------------------------------------------ |
+| Name           | `agentdash-service`                                                |
+| Trigger        | `AtLogOn` (current user)                                           |
+| Action         | `scripts\run-service.cmd` (working dir = project root)             |
+| Principal      | current user, `LogonType=Interactive`, `RunLevel=Limited`          |
+| Restart on fail| `RestartCount=3`, `RestartInterval=1 minute`                       |
+| Multiple inst. | `IgnoreNew` (don't double-bind the port)                           |
+| Exec time limit| unlimited (`0`)                                                    |
+
+`LogonType=Interactive` is required so `uv` resolves on the user PATH.
+`RunLevel=Limited` — the service binds loopback and doesn't need admin
+at runtime; UAC is only used to install / remove the task itself.
+
+### 13.3 Install / remove
 
 ```powershell
+# from project root, any PowerShell (will trigger UAC once)
+powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1
+powershell -ExecutionPolicy Bypass -File scripts\unregister-task.ps1
+```
+
+`register-task.ps1` refuses to overwrite an existing task and refuses
+to register while port 8021 is already bound (catches "uvicorn is up
+from a manual run"). `unregister-task.ps1` is a no-op when the task is
+absent. Both exit 0 on no-op.
+
+### 13.4 Verify
+
+```powershell
+Get-ScheduledTask -TaskName 'agentdash-service'        # State = Ready / Running
+Get-NetTCPConnection -LocalPort 8021 -State Listen     # bound to 127.0.0.1
+curl.exe http://127.0.0.1:8021/api/v1/health           # {"status":"ok"}
+Get-Content "$env:LOCALAPPDATA\agentdash-service\service.log"
+```
+
+### 13.5 Manual start (without Task Scheduler)
+
+```powershell
+cd C:\Projects\Python\0803_agent-tokens-dashboard
 uv run uvicorn agentdash_service.main:app --host 127.0.0.1 --port 8021
 ```
 
-in the project working directory. Until that's registered, start the
-service by hand after each reboot.
-
-The service is **not** designed for `nssm` / `sc.exe` / NSSM-style
-service hosting — uvicorn is foreground, and Task Scheduler handles
-"run on logon" without the SCM overhead.
+This is the dev loop — same command Task Scheduler runs at logon.
 
 ## 14. What this service does NOT do
 
