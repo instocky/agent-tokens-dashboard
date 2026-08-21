@@ -11,7 +11,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from ..config import settings, TZ
+from ..config import TZ, settings
 from ..models.tokens import (
     CurrentWindowRef,
     HourlyBar,

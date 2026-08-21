@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ..config import settings, TZ
+from ..config import TZ
 
 
 def now_in_tz() -> datetime:

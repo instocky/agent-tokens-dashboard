@@ -10,12 +10,11 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from ..config import settings, TZ
-from ..models.sessions import SessionsSnapshot, SessionsWindow, SessionRow
+from ..config import TZ, settings
+from ..models.sessions import SessionRow, SessionsSnapshot, SessionsWindow
 from . import time as time_svc
 from .cost import compute_cost
 from .project import project_from_workspace
-
 
 # ---- SQL helpers (reuse patterns from services/projects.py) -------------
 
@@ -61,7 +60,10 @@ def _sessions_meta(
     if not sids:
         return {}
     placeholders = ",".join("?" for _ in sids)
-    sql = f"SELECT session_id, record_json FROM local_runtime_sessions WHERE session_id IN ({placeholders})"
+    sql = (
+        f"SELECT session_id, record_json FROM local_runtime_sessions "
+        f"WHERE session_id IN ({placeholders})"
+    )
     out: dict[str, dict[str, Any]] = {}
     try:
         for sid, rec_json in con.execute(sql, sids):
@@ -101,8 +103,10 @@ def build_snapshot(
     rows: list[SessionRow] = []
     for sid, (mn, mx, user) in sessions.items():
         rec = meta.get(sid, {})
-        title = rec.get("title") if isinstance(rec.get("title"), str) else None
-        workspace_dir = rec.get("workspaceDir") if isinstance(rec.get("workspaceDir"), str) else None
+        title_v = rec.get("title")
+        title = title_v if isinstance(title_v, str) else None
+        wsd = rec.get("workspaceDir")
+        workspace_dir = wsd if isinstance(wsd, str) else None
         status = rec.get("status")
         project = project_from_workspace(workspace_dir)
 

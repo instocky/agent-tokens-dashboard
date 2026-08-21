@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from ..config import settings, TZ
+from ..config import TZ, settings
 from ..models.projects import (
     ProjectRow,
     ProjectsSnapshot,
@@ -75,7 +75,10 @@ def _sessions_meta(
     if not sids:
         return {}
     placeholders = ",".join("?" for _ in sids)
-    sql = f"SELECT session_id, record_json FROM local_runtime_sessions WHERE session_id IN ({placeholders})"
+    sql = (
+        f"SELECT session_id, record_json FROM local_runtime_sessions "
+        f"WHERE session_id IN ({placeholders})"
+    )
     out: dict[str, dict[str, Any]] = {}
     try:
         for sid, rec_json in con.execute(sql, sids):
@@ -198,7 +201,8 @@ def build_snapshot(
     sid_to_project: dict[str, str] = {}
     for sid, (mn, mx, _user) in sessions.items():
         rec = meta.get(sid, {})
-        workspace_dir = rec.get("workspaceDir") if isinstance(rec.get("workspaceDir"), str) else None
+        wsd = rec.get("workspaceDir")
+        workspace_dir = wsd if isinstance(wsd, str) else None
         status = rec.get("status")
         project = project_from_workspace(workspace_dir)
         if project is None:

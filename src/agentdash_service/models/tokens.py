@@ -9,7 +9,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 Intensity = Literal["L0", "L1", "L2", "L3", "L4", "PEAK"]
 WindowName = Literal["morning", "midday", "afternoon", "evening", "night"]
 

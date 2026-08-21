@@ -5,6 +5,9 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from typing import Annotated
+
+from fastapi import Depends
 
 from .config import settings
 
@@ -39,4 +42,9 @@ def db_session() -> Generator[sqlite3.Connection, None, None]:
     """FastAPI dependency that yields a read-only connection per request."""
     with get_db() as con:
         yield con
+
+
+# Shared FastAPI dependency type — use as `con: DbConnection` in endpoint
+# signatures to avoid ruff B008 (function call in argument default).
+DbConnection = Annotated[sqlite3.Connection, Depends(db_session)]
 
