@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from .api.v1 import projects as projects_router
 from .api.v1 import tokens as tokens_router
 from .config import settings
 from .db import get_db
@@ -29,6 +30,7 @@ app = FastAPI(
 )
 
 app.include_router(tokens_router.router)
+app.include_router(projects_router.router)
 
 
 @app.get("/api/v1/health")
