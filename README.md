@@ -225,29 +225,42 @@ If port `8021` is already in use you'll see `WinError 10048` on startup
 
 ## Auto-start (Windows Task Scheduler)
 
-Wired to **AtLogOn** via a single scheduled task. Three files in
+Wired to **AtLogOn** via a single scheduled task. Four files in
 `scripts/`:
 
 | File | Role |
 | ---- | ---- |
-| `run-service.cmd`     | thin wrapper, redirects stdout+stderr to log |
-| `register-task.ps1`   | idempotent, self-elevates via UAC |
+| `run-service.vbs`     | hidden launcher — invokes `run-service.cmd` with `WindowStyle=0` (SW_HIDE) so the task does not pop a visible `cmd.exe` window in the interactive session |
+| `run-service.cmd`     | thin wrapper, `cd` to project, `uv run uvicorn ... >> log 2>&1` |
+| `register-task.ps1`   | idempotent, self-elevates via UAC; registers `wscript.exe` → `run-service.vbs` as the action |
 | `unregister-task.ps1` | idempotent rollback, self-elevates via UAC |
+
+The VBS wrapper exists because Task Scheduler launches console
+scripts with default visibility. Pointing the action directly at
+the .cmd makes a `cmd.exe` window flash on every logon and every
+crash-restart. The VBS hides it. See `CHANGELOG.md` 2026-08-22
+for the full rationale.
 
 Install:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\register-task.ps1
-# (one UAC prompt, then: registered 'agentdash-service' (AtLogOn -> ...\run-service.cmd))
+# (one UAC prompt, then: registered 'agentdash-service' (AtLogOn -> ...\run-service.vbs))
 ```
 
 Verify:
 
 ```powershell
 Get-ScheduledTask -TaskName 'agentdash-service'   # State = Ready
-Get-NetTCPConnection -LocalPort 8021 -State Listen
+curl http://127.0.0.1:8021/api/v1/health          # {"status":"ok"}  -- preferred
 Get-Content "$env:LOCALAPPDATA\agentdash-service\service.log"
 ```
+
+> `Get-NetTCPConnection -LocalPort 8021 -State Listen` is **not**
+> recommended as the primary smoke test — its backing CIM query
+> occasionally returns "no objects" for freshly-bound loopback
+> sockets. Use `curl` (above) or
+> `netstat -ano | Select-String ":8021" | Select-String "LISTENING"`.
 
 Remove:
 
@@ -325,12 +338,14 @@ agentdash-service/
 │   └── models/                    #   Pydantic v2 response schemas
 ├── tests/                         # pytest, 15 tests
 ├── scripts/                       # Windows Task Scheduler install/remove
+│   ├── run-service.vbs            #   hidden launcher (WScript.Shell, WindowStyle=0)
 │   ├── run-service.cmd            #   log-redirecting wrapper
 │   ├── register-task.ps1          #   self-elevating, idempotent
 │   └── unregister-task.ps1        #   self-elevating, idempotent
 ├── docs/
 │   ├── ARCHITECTURE.md            # architecture deep-dive, layers, lifecycle
 │   └── API_CONTRACT.md            # endpoint shapes, DB schema, env vars
+├── CHANGELOG.md                   # dated, Keep-a-Changelog format
 └── tmp/legacy/                    # pre-service artefacts (Phase 9 cleanup pending)
 ```
 

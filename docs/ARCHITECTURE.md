@@ -264,12 +264,20 @@ Windows-only, single-user, loopback. The service is wired to start
 
 | File | Role |
 | ---- | ---- |
+| `scripts/run-service.vbs`     | hidden launcher: `WScript.Shell.Run` of `run-service.cmd` with `WindowStyle=0` (SW_HIDE), `bWaitOnReturn=True` |
 | `scripts/run-service.cmd`     | thin wrapper: `cd` to project, `uv run uvicorn ... >> log 2>&1` |
-| `scripts/register-task.ps1`   | idempotent register of the `agentdash-service` task (self-elevates via UAC) |
+| `scripts/register-task.ps1`   | idempotent register of the `agentdash-service` task (self-elevates via UAC); registers `wscript.exe → run-service.vbs` as the action |
 | `scripts/unregister-task.ps1` | idempotent rollback (self-elevates via UAC) |
 
-The .cmd wrapper is the only place log redirection lives; the .ps1
-scripts stay readable.
+The VBS wrapper exists because Task Scheduler launches console
+scripts with default visibility — pointing the action directly
+at the .cmd would flash a `cmd.exe` window in the interactive
+session on every logon and every crash-restart. The VBS hides it
+and `bWaitOnReturn=True` keeps the task in the "Running" state
+so the existing `RestartCount=3` / `RestartInterval=1 minute`
+crash-restart policy still fires when uvicorn dies. The .cmd
+wrapper is the only place log redirection lives; the .ps1 scripts
+stay readable.
 
 ### 13.2 Task definition
 
@@ -277,7 +285,7 @@ scripts stay readable.
 | -------------- | ------------------------------------------------------------------ |
 | Name           | `agentdash-service`                                                |
 | Trigger        | `AtLogOn` (current user)                                           |
-| Action         | `scripts\run-service.cmd` (working dir = project root)             |
+| Action         | `wscript.exe` → `scripts\run-service.vbs` (working dir = project root) |
 | Principal      | current user, `LogonType=Interactive`, `RunLevel=Limited`          |
 | Restart on fail| `RestartCount=3`, `RestartInterval=1 minute`                       |
 | Multiple inst. | `IgnoreNew` (don't double-bind the port)                           |
@@ -286,6 +294,9 @@ scripts stay readable.
 `LogonType=Interactive` is required so `uv` resolves on the user PATH.
 `RunLevel=Limited` — the service binds loopback and doesn't need admin
 at runtime; UAC is only used to install / remove the task itself.
+`wscript.exe` is the windowless host; letting Task Scheduler resolve
+the .vbs via file association can pick `cscript.exe` (console host)
+and would re-introduce the visible window.
 
 ### 13.3 Install / remove
 
@@ -304,10 +315,18 @@ absent. Both exit 0 on no-op.
 
 ```powershell
 Get-ScheduledTask -TaskName 'agentdash-service'        # State = Ready / Running
-Get-NetTCPConnection -LocalPort 8021 -State Listen     # bound to 127.0.0.1
-curl.exe http://127.0.0.1:8021/api/v1/health           # {"status":"ok"}
+curl.exe http://127.0.0.1:8021/api/v1/health           # {"status":"ok"}  -- preferred
 Get-Content "$env:LOCALAPPDATA\agentdash-service\service.log"
 ```
+
+> `Get-NetTCPConnection -LocalPort 8021 -State Listen` is **not**
+> recommended as the primary smoke test — its CIM query
+> occasionally returns "no objects" for freshly-bound loopback
+> sockets even when the service is responding. Use `curl` (above)
+> or `netstat -ano | Select-String ":8021" | Select-String "LISTENING"`.
+> The CIM cmdlet is still useful for diagnosing *long-running*
+> services where the cache has caught up. See `CHANGELOG.md`
+> 2026-08-22.
 
 ### 13.5 Manual start (without Task Scheduler)
 

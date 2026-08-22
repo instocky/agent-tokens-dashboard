@@ -47,14 +47,19 @@ $ErrorActionPreference = 'Stop'
 
 $TaskName       = 'agentdash-service'
 $ProjectDir     = 'C:\Projects\Python\0803_agent-tokens-dashboard'
-$WrapperScript  = Join-Path $ProjectDir 'scripts\run-service.cmd'
+$WrapperScript  = Join-Path $ProjectDir 'scripts\run-service.vbs'
+$InnerScript    = Join-Path $ProjectDir 'scripts\run-service.cmd'
 $LogDir         = Join-Path $env:LOCALAPPDATA 'agentdash-service'
 $Port           = 8021
 
 # --- preflight ---------------------------------------------------------------
 
 if (-not (Test-Path $WrapperScript)) {
-    throw "wrapper script not found: $WrapperScript"
+    throw "vbs wrapper not found: $WrapperScript"
+}
+
+if (-not (Test-Path $InnerScript)) {
+    throw "inner cmd wrapper not found: $InnerScript"
 }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -81,8 +86,21 @@ if (-not (Test-Path $LogDir)) {
 
 # --- define task -------------------------------------------------------------
 
+# Invoke wscript.exe explicitly. If we just point -Execute at the .vbs,
+# Task Scheduler can pick cscript.exe (console host) via file association,
+# which would re-introduce a visible console window. wscript.exe is the
+# windowless host.
+
+# The wscript.exe argument must be a single token: "C:\path\to\file.vbs".
+# We build it into a variable first because the in-line '..."' + $path + '..."'
+# form breaks the backtick line-continuation (PowerShell treats the '+' as a
+# new positional arg to the cmdlet, not as a string-concat operator).
+
+$wscriptArg = '"' + $WrapperScript + '"'
+
 $action    = New-ScheduledTaskAction `
-                -Execute $WrapperScript `
+                -Execute 'wscript.exe' `
+                -Argument $wscriptArg `
                 -WorkingDirectory $ProjectDir
 
 $trigger   = New-ScheduledTaskTrigger -AtLogOn
@@ -108,9 +126,10 @@ Register-ScheduledTask `
     -Trigger     $trigger `
     -Settings    $settings `
     -Principal   $principal `
-    -Description 'Local FastAPI dashboard service (127.0.0.1:8021). Restarts on crash.' `
+    -Description 'Local FastAPI dashboard service (127.0.0.1:8021). Restarts on crash. Runs hidden via VBS wrapper.' `
     | Out-Null
 
 Write-Host "registered '$TaskName' (AtLogOn -> $WrapperScript)" -ForegroundColor Green
+Write-Host "inner:    $InnerScript"
 Write-Host "log: $LogDir\service.log"
 Write-Host "next: log out and back in (or run: Start-ScheduledTask -TaskName '$TaskName')"
