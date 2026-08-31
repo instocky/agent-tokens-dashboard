@@ -658,7 +658,7 @@
           const inputShare = b.total > 0 ? ((b.input || 0) / b.total * 100).toFixed(1) : 0;
           bar.style.background = `linear-gradient(to top, var(--bar-in) 0% ${inputShare}%, var(--bar-out) ${inputShare}% 100%)`;
         }
-        bar.title = `${pad2(b.hour)}:00–${pad2((b.hour+1)%24)}:59 — ${fmtCompact(b.total)} (${fmtCost(b.cost_usd)})`;
+        bar.title = `${pad2(b.hour)}:00–${pad2(b.hour)}:59 — ${fmtCompact(b.total)} (${fmtCost(b.cost_usd)})`;
         cell.appendChild(bar);
 
         const label = document.createElement("span");

@@ -730,7 +730,7 @@
           } else {
             bar.style.height = '0%';
           }
-          bar.title = `${pad2(c.hour)}:00–${pad2((c.hour + 1) % 24)}:59: ↑${fmtInt(c.input)} · ↓${fmtInt(c.output)} (Σ ${fmtInt(c.total)})`;
+          bar.title = `${pad2(c.hour)}:00–${pad2(c.hour)}:59: ↑${fmtInt(c.input)} · ↓${fmtInt(c.output)} (Σ ${fmtInt(c.total)})`;
           cell.appendChild(bar);
           if (c.hour === peakHour && c.total > 0) {
             const peak = document.createElement('div');
