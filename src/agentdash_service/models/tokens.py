@@ -38,6 +38,10 @@ class HourlyBar(BaseModel):
     is_current: bool
     is_future: bool
     is_empty: bool
+    # Per-hour cache_read; summed at the TodayBlock / day level into
+    # `totals.cache_read`. Kept separate from `total` so the
+    # `total == input + output` invariant is preserved (see ADR-001).
+    cache_read: int = 0
 
 
 class WindowAgg(BaseModel):
@@ -119,3 +123,10 @@ class TokensSnapshot(BaseModel):
     now_session: NowSession | None
     weekly: WeeklyBlock
     sparklines: Sparklines
+    # Per-day 24-hour bars for every date in the rolling weekly window.
+    # Used by the dashboard for the WEEKLY → 24H STREAM drilldown
+    # (see docs/ADR-002-selectable-stream-day.md). Keys are ISO dates
+    # ("YYYY-MM-DD"); values are 24-element lists in the same shape as
+    # `today.hourly`. Future days within the window are included as
+    # zero-bars with `is_future=true`.
+    hourly_by_date: dict[str, list[HourlyBar]]

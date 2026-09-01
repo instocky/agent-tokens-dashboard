@@ -236,7 +236,7 @@ def _build_today_block(
     # 24 hourly bars
     raw_bars: list[dict[str, Any]] = []
     for h in range(24):
-        in_t, out_t, _ = hourly_map.get((today, h), (0, 0, 0))
+        in_t, out_t, cread = hourly_map.get((today, h), (0, 0, 0))
         total = in_t + out_t
         raw_bars.append({
             "hour": h,
@@ -247,6 +247,7 @@ def _build_today_block(
             "is_current": h == current_hour,
             "is_future": h > current_hour,
             "is_empty": total == 0,
+            "cache_read": cread,
         })
     _compute_intensity(raw_bars)
     hourly = [HourlyBar(**b) for b in raw_bars]
@@ -437,6 +438,55 @@ def _build_sparklines(
 # ---- Public entry --------------------------------------------------------
 
 
+def _build_hourly_by_date(
+    today: date,
+    now: datetime,
+    week_count: int,
+    hourly_map: dict[tuple[date, int], tuple[int, int, int]],
+) -> dict[str, list[HourlyBar]]:
+    """Per-day 24-hour bars for the entire rolling weekly window.
+
+    Mirrors the date range of `weekly.weeks[].days[]`: ``week_count + 1``
+    weeks × 7 days. For each date emits exactly 24 ``HourlyBar`` objects
+    (zero-bars with ``is_future=True`` for dates after today). The bar at
+    ``(today, now.hour)`` is the only one with ``is_current=True``.
+
+    Used by the dashboard to render the 24H STREAM block for any day
+    the user clicks in the WEEKLY COMPARE chart — see
+    ``docs/ADR-002-selectable-stream-day.md``.
+    """
+    iso = today.isocalendar()
+    current_monday = today - timedelta(days=iso[2] - 1)
+    start_monday = current_monday - timedelta(weeks=week_count)
+    current_hour = now.hour
+
+    out: dict[str, list[HourlyBar]] = {}
+    for offset in range((week_count + 1) * 7):
+        d = start_monday + timedelta(days=offset)
+        is_day_future = d > today
+        raw_bars: list[dict[str, Any]] = []
+        for h in range(24):
+            in_t, out_t, cread = hourly_map.get((d, h), (0, 0, 0))
+            total = in_t + out_t
+            raw_bars.append({
+                "hour": h,
+                "input": in_t,
+                "output": out_t,
+                "total": total,
+                "cost_usd": compute_cost(in_t, out_t, settings),
+                "intensity": "L0",  # recomputed below
+                # Match `today.hourly` semantics: future = hasn't happened yet,
+                # either because the day is ahead or the hour within today is ahead.
+                "is_current": d == today and h == current_hour,
+                "is_future": is_day_future or (d == today and h > current_hour),
+                "is_empty": total == 0,
+                "cache_read": cread,
+            })
+        _compute_intensity(raw_bars)
+        out[d.isoformat()] = [HourlyBar(**b) for b in raw_bars]
+    return out
+
+
 def build_snapshot(con: sqlite3.Connection, now: datetime) -> TokensSnapshot:
     """Build the full /api/v1/tokens/snapshot response."""
     today = now.date()
@@ -453,4 +503,5 @@ def build_snapshot(con: sqlite3.Connection, now: datetime) -> TokensSnapshot:
         now_session=_build_now_session(now_session),
         weekly=_build_weekly_block(today, now, hourly_map),
         sparklines=_build_sparklines(today, now, hourly_map),
+        hourly_by_date=_build_hourly_by_date(today, now, settings.week_count, hourly_map),
     )

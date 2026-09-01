@@ -288,6 +288,14 @@
       border: 1px dashed rgba(255,255,255,0.12);
       opacity: 0.7; box-shadow: none;
     }
+    /* WEEKLY → 24H STREAM drilldown (ADR-002). Clickable day cells get
+       pointer cursor; the currently-selected day (whatever the 24H STREAM
+       is showing) gets a 1px white outline on the bar itself. */
+    .bar-cell--clickable { cursor: pointer; }
+    .bar-cell--selected .bar {
+      outline: 1px solid rgba(255,255,255,0.85);
+      outline-offset: -1px;
+    }
     .threshold {
       position: absolute; left: -3px; right: -3px;
       border-top: 2px dashed #f5f7fb;
@@ -484,7 +492,7 @@
 
     <section class="panel chart-panel chart-panel--24h">
       <div class="chart-head">
-        <p class="eyebrow">Today · 24H Stream <span class="eyebrow__date" id="eyebrow-date">—</span></p>
+        <p class="eyebrow">24H Stream <span class="eyebrow__date" id="eyebrow-date">—</span></p>
         <div class="chart-meta" id="meta-24h">Всего: <strong>—</strong> · Пик: <strong>—</strong></div>
       </div>
       <div class="chart-shell chart-shell--24h">
@@ -500,6 +508,36 @@
     function el(id) { return document.getElementById(id); }
     function setText(id, v) { el(id).textContent = v; }
     function pad2(n) { return String(n).padStart(2, "0"); }
+
+    // -- Stream-day selection (ADR-002) ----------------------------------
+    // The 24H STREAM block shows whatever day the user last clicked in
+    // WEEKLY COMPARE (default = today). Persisted in localStorage under
+    // a single ISO date key. Stale entries (older than today) get cleared
+    // on the next render — no background timer.
+    const SELECTED_DAY_KEY = "agentdash:selectedDay";
+    let selectedDay = null;     // "YYYY-MM-DD" — driven by render()
+    let lastData = null;        // last snapshot — used for re-render on click
+
+    function readSelectedDay() {
+      try { return localStorage.getItem(SELECTED_DAY_KEY); }
+      catch (_) { return null; }
+    }
+    function writeSelectedDay(v) {
+      try { localStorage.setItem(SELECTED_DAY_KEY, v); } catch (_) {}
+    }
+    function clearSelectedDay() {
+      try { localStorage.removeItem(SELECTED_DAY_KEY); } catch (_) {}
+    }
+    function resolveSelectedDay(serverToday) {
+      const stored = readSelectedDay();
+      if (!stored || stored === serverToday) return serverToday;
+      // stale (stored < today) or impossible (stored > today) → reset
+      clearSelectedDay();
+      return serverToday;
+    }
+    function isClickableDay(day, todayStr) {
+      return day !== null && day.date <= todayStr;
+    }
     function fmtCompact(n) {
       if (n == null) return "—";
       const abs = Math.abs(n);
@@ -546,7 +584,7 @@
       return m;
     }
 
-    function setDayBar(cell, day, idxInWeek, isCurrentWeek, logMode, yMax) {
+    function setDayBar(cell, day, idxInWeek, isCurrentWeek, logMode, yMax, todayStr) {
       cell.innerHTML = "";
       const bar = document.createElement("div");
       const isFuture = day === null && !isCurrentWeek; // filled by caller via separate path
@@ -559,6 +597,11 @@
         cell.appendChild(bar);
         return;
       }
+      // Tag the cell with the day and mark it clickable so the WEEKLY →
+      // STREAM drilldown handler can find it. The click handler is wired
+      // by `renderWeek` (single place that knows about `todayStr`).
+      cell.dataset.date = day.date;
+      if (isClickableDay(day, todayStr)) cell.classList.add("bar-cell--clickable");
       const inT = day.input || 0;
       const outT = day.output || 0;
       const total = day.total;
@@ -573,7 +616,7 @@
       cell.appendChild(bar);
     }
 
-    function renderWeek(week, container, logMode, yMax) {
+    function renderWeek(week, container, logMode, yMax, todayStr) {
       const wk = document.createElement("div");
       wk.className = "week" + (week.is_current ? " current" : "");
 
@@ -613,7 +656,10 @@
           // current week — future = i > today's day_of_week
           return false; // simplified; actual handled via data below
         })();
-        setDayBar(cell, day, i, week.is_current, logMode, yMax);
+        setDayBar(cell, day, i, week.is_current, logMode, yMax, todayStr);
+        if (day && isClickableDay(day, todayStr)) {
+          cell.addEventListener("click", () => selectDay(day.date));
+        }
         bars.appendChild(cell);
       }
       wk.appendChild(bars);
@@ -636,33 +682,33 @@
       container.appendChild(wk);
     }
 
-    function renderWeeks(weeks, container, logMode) {
+    function renderWeeks(weeks, container, logMode, todayStr) {
       container.innerHTML = "";
       const yMax = logMode ? 0 : yMaxFromWeeks(weeks);
-      for (const w of weeks) renderWeek(w, container, logMode, yMax);
+      for (const w of weeks) renderWeek(w, container, logMode, yMax, todayStr);
     }
 
-    function renderHours(hourly, currentHour) {
+    function renderHours(bars) {
       const container = el("hours-24h");
       container.innerHTML = "";
       let maxTotal = 0;
-      for (const b of hourly) if (b.total > maxTotal) maxTotal = b.total;
-      for (const b of hourly) {
+      for (const b of bars) if (b.total > maxTotal) maxTotal = b.total;
+      for (const b of bars) {
         const cell = document.createElement("div");
         cell.className = "hour-cell";
         const bar = document.createElement("div");
-        const isFuture = b.hour > currentHour;
-        const isCurrent = b.hour === currentHour;
-        const isEmpty = b.total === 0;
-        if (isFuture) {
+        // Use the bar's own `is_future` / `is_current` flags so the same
+        // function renders today (current hour highlighted, future hours
+        // dashed) and any past day (all hours equal, no current highlight).
+        if (b.is_future) {
           bar.className = "bar-24h future";
           bar.style.height = "6px";
-        } else if (isEmpty) {
+        } else if (b.is_empty) {
           bar.className = "bar-24h empty";
           bar.style.height = "0%";
         } else {
           const pct = maxTotal > 0 ? (b.total / maxTotal) * 100 : 0;
-          bar.className = "bar-24h" + (isCurrent ? " current" : " active");
+          bar.className = "bar-24h" + (b.is_current ? " current" : " active");
           bar.style.height = Math.max(2, pct) + "%";
           const inputShare = b.total > 0 ? ((b.input || 0) / b.total * 100).toFixed(1) : 0;
           bar.style.background = `linear-gradient(to top, var(--bar-in) 0% ${inputShare}%, var(--bar-out) ${inputShare}% 100%)`;
@@ -671,7 +717,7 @@
         cell.appendChild(bar);
 
         const label = document.createElement("span");
-        label.className = "hour-label" + (isFuture ? " hour-label--future" : "");
+        label.className = "hour-label" + (b.is_future ? " hour-label--future" : "");
         label.textContent = pad2(b.hour);
         cell.appendChild(label);
 
@@ -693,7 +739,57 @@
       else node.classList.add("hero-pill__actual--over");
     }
 
+    // -- Stream-day selection (ADR-002) ----------------------------------
+
+    function applySelectedDayOutline() {
+      document.querySelectorAll(".bar-cell--selected").forEach(n =>
+        n.classList.remove("bar-cell--selected"));
+      if (!selectedDay) return;
+      // Both weekly charts (linear + log) render the same cells; both get
+      // the outline. The CSS targets `.bar` inside `.bar-cell--selected`,
+      // not the cell itself, so layout doesn't shift.
+      document.querySelectorAll(`.bar-cell[data-date="${selectedDay}"]`)
+        .forEach(n => n.classList.add("bar-cell--selected"));
+    }
+
+    function selectDay(dateStr) {
+      // No-op when the clicked day is already the one shown (TL decision
+      // 2026-09-01). Avoids re-render churn and keeps the visual state
+      // stable when the user double-clicks.
+      if (dateStr === selectedDay) return;
+      selectedDay = dateStr;
+      writeSelectedDay(dateStr);
+      applySelectedDayOutline();
+      renderStreamForSelected();
+    }
+
+    function renderStreamForSelected() {
+      if (!lastData || !selectedDay) return;
+      const bars = lastData.hourly_by_date[selectedDay] || [];
+      renderHours(bars);
+
+      // Header date — reflects whatever day the stream is showing now.
+      el("eyebrow-date").textContent = selectedDay;
+
+      // Meta line rebuilt from the selected day's bars so the totals track
+      // the day in the chart (RCache from per-hour cache_read, which was
+      // previously only available at the day-aggregate level on `today`).
+      const total = bars.reduce((s, b) => s + (b.total || 0), 0);
+      const cacheRead = bars.reduce((s, b) => s + (b.cache_read || 0), 0);
+      let peakTxt = "—";
+      let peakTok = 0;
+      for (const b of bars) {
+        if (b.is_future) continue;
+        if (b.total > peakTok) { peakTok = b.total; peakTxt = fmtHourShort(b.hour) + " (" + fmtCompact(b.total) + ")"; }
+      }
+      el("meta-24h").innerHTML =
+        `Всего: <strong>${fmtCompact(total)}</strong>`
+        + ` · Пик: <strong>${peakTxt}</strong>`
+        + ` · RCache: <strong>${fmtCompact(cacheRead)}</strong>`;
+    }
+
     function render(data) {
+      lastData = data;  // cache for click handlers (re-render without refetch)
       const now = new Date(data.now_msk);
       const today = data.today;
       const sess = data.now_session;
@@ -779,22 +875,18 @@
       // (drop the oldest) so the layout matches legacy: W-N, W-N+1, ..., current.
       const scale = el("chart-scale").dataset.scale;
       const displayWeeks = wk.weeks.slice(-4);
-      renderWeeks(displayWeeks, el("weeks-log"), true);
-      renderWeeks(displayWeeks, el("weeks-linear"), false);
+      // `todayDate` is the server's MSK-aligned "today" — pass it to the
+      // weekly renderer so day cells know whether they're clickable, and to
+      // the selection pipeline for stale-LS comparison.
+      renderWeeks(displayWeeks, el("weeks-log"), true, todayDate);
+      renderWeeks(displayWeeks, el("weeks-linear"), false, todayDate);
 
-      // 24H eyebrow + meta
-      el("eyebrow-date").textContent = todayDate;
-      const peakH = today.peak_hour;
-      const peakTxt = peakH
-        ? fmtHourShort(peakH.hour) + " (" + fmtCompact(peakH.tokens) + ")"
-        : "—";
-      el("meta-24h").innerHTML =
-        `Всего: <strong>${fmtCompact(today.totals.total)}</strong>` +
-        ` · Пик: <strong>${peakTxt}</strong>` +
-        ` · RCache: <strong>${fmtCompact(today.totals.cache_read || 0)}</strong>`;
-
-      // 24H stream
-      renderHours(today.hourly, curHour);
+      // Stream selection: resolve against server's "today" (which is MSK-
+      // aligned, not the browser's local clock). STALE/INVALID → reset to
+      // today. Then move the white outline and re-render the stream block.
+      selectedDay = resolveSelectedDay(todayDate);
+      applySelectedDayOutline();
+      renderStreamForSelected();
     }
 
     async function refresh() {

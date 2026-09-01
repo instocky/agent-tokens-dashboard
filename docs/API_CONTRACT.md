@@ -194,6 +194,22 @@ Full data for `dashboard.html`. One request = one snapshot.
     "current": [100, 200, 300],
     "today":   [0, 0, 500, 1000],
     "window":  [200, 400, 600]
+  },
+  "hourly_by_date": {
+    "2026-08-21": [
+      {
+        "hour": 0,
+        "input": 0,
+        "output": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "intensity": "L0",
+        "is_current": false,
+        "is_future": false,
+        "is_empty": true
+      }
+    ],
+    "2026-08-22": [/* 24 bars, same shape as above */]
   }
 }
 ```
@@ -201,6 +217,14 @@ Full data for `dashboard.html`. One request = one snapshot.
 `now_session` is `null` when no activity today. `weekly.weeks[].days[]` is
 `null` for future days and days with no data. `peak_hour` is `null` if no
 activity today.
+
+`hourly_by_date` carries 24-hour bars for every date in the same rolling
+window as `weekly.weeks[]` (5 weeks × 7 days = 35 entries by default).
+Keys are ISO dates (`YYYY-MM-DD`); values are 24-element lists in the
+same shape as `today.hourly`. The entry for `today.date` is byte-for-byte
+equal to `today.hourly`. Used by the dashboard to render the 24H STREAM
+block for any day the user clicks in the WEEKLY COMPARE chart — see
+[`docs/ADR-002-selectable-stream-day.md`](./ADR-002-selectable-stream-day.md).
 
 ### `GET /api/v1/projects/snapshot`
 

@@ -7,6 +7,17 @@ and this project does not yet tag versions, so each entry is dated.
 
 ## [Unreleased] — 2026-08-22
 
+### Added
+- **Drilldown: WEEKLY COMPARE → 24H STREAM.** Click any day bar in
+  the weekly chart to load that day's 24-hour breakdown into the
+  stream chart below. Default is today; the chosen day is outlined
+  in white (1px) on the weekly chart. Selection persists in
+  `localStorage` under `agentdash:selectedDay` and resets on the
+  next calendar day (no background timer — reset happens on the
+  next fetch / F5). API: new `hourly_by_date` field in
+  `GET /api/v1/tokens/snapshot` (24 bars × every date in the
+  rolling window). See `docs/ADR-002-selectable-stream-day.md`.
+
 ### Changed
 - **Auto-start runs hidden (no visible `cmd.exe` window).** New
   `scripts/run-service.vbs` wraps `run-service.cmd` via
