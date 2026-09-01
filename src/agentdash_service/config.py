@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     default_model: str = "minimax-m3"
     cost_input_per_1m_usd: float = 0.23
     cost_output_per_1m_usd: float = 0.96
+    cost_cache_read_per_1m_usd: float = 0.06
 
     # Weekly quota
     weekly_cap_tokens: int = 60_000_000

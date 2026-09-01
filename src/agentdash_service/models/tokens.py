@@ -87,6 +87,8 @@ class WeeklyDay(BaseModel):
     output: int
     total: int
     cost_usd: float
+    cache_read: int = 0
+    cache_cost_usd: float = 0.0
 
 
 class WeeklyWeek(BaseModel):
@@ -94,6 +96,7 @@ class WeeklyWeek(BaseModel):
     monday: str
     is_current: bool
     days: list[WeeklyDay | None]  # None for future / no-data days
+    cache_cost_usd: float = 0.0
 
 
 class WeeklyBlock(BaseModel):

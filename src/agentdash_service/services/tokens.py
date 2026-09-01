@@ -344,6 +344,7 @@ def _build_weekly_block(
         days: list[WeeklyDay | None] = []
         week_in = 0
         week_out = 0
+        week_cache_read = 0
         for d_idx in range(7):
             day_date = monday + timedelta(days=d_idx)
             if day_date > today:
@@ -353,29 +354,37 @@ def _build_weekly_block(
             # Past or today — sum hourly
             in_sum = sum(hourly_map.get((day_date, h), (0, 0, 0))[0] for h in range(24))
             out_sum = sum(hourly_map.get((day_date, h), (0, 0, 0))[1] for h in range(24))
-            if in_sum == 0 and out_sum == 0:
+            cread_sum = sum(hourly_map.get((day_date, h), (0, 0, 0))[2] for h in range(24))
+            if in_sum == 0 and out_sum == 0 and cread_sum == 0:
                 days.append(None)
                 continue
             day_cost = compute_cost(in_sum, out_sum, settings)
+            day_cache_cost = (cread_sum / 1_000_000) * settings.cost_cache_read_per_1m_usd
             days.append(WeeklyDay(
                 date=day_date.isoformat(),
                 input=in_sum,
                 output=out_sum,
                 total=in_sum + out_sum,
                 cost_usd=day_cost,
+                cache_read=cread_sum,
+                cache_cost_usd=day_cache_cost,
             ))
             if is_current:
                 week_in += in_sum
                 week_out += out_sum
+                week_cache_read += cread_sum
 
         if is_current:
             weekly_spent = week_in + week_out
+
+        week_cache_cost = (week_cache_read / 1_000_000) * settings.cost_cache_read_per_1m_usd
 
         weeks.append(WeeklyWeek(
             label=label,
             monday=monday.isoformat(),
             is_current=is_current,
             days=days,
+            cache_cost_usd=week_cache_cost,
         ))
 
     days_left = time_svc.days_left_in_week(today)

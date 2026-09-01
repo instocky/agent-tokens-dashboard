@@ -262,6 +262,10 @@
       font-size: 10px; font-weight: 600; color: var(--muted);
       letter-spacing: 0.01em;
     }
+    .week-total__cache {
+      font-size: 10px; font-weight: 600; color: var(--muted);
+      letter-spacing: 0.01em; opacity: 0.85;
+    }
     .week.current .week-total { color: var(--accent); }
     .week.current .week-total__cost { color: var(--muted); }
     .bars {
@@ -579,16 +583,21 @@
       head.innerHTML = `<span class="week-label">${week.label}</span>`
         + `<span class="week-total"><span class="week-total__tokens" data-tokens></span>`
         + `<span class="week-total__sep" aria-hidden="true"></span>`
-        + `<span class="week-total__cost" data-cost></span></span>`;
+        + `<span class="week-total__cost" data-cost></span>`
+        + `<span class="week-total__cache" data-cache></span></span>`;
       wk.appendChild(head);
 
       // compute week total (skip null days)
-      let w_in = 0, w_out = 0;
-      for (const d of week.days) if (d) { w_in += d.input; w_out += d.output; }
+      let w_in = 0, w_out = 0, w_cache = 0;
+      for (const d of week.days) if (d) {
+        w_in += d.input; w_out += d.output; w_cache += d.cache_read || 0;
+      }
       const w_total = w_in + w_out;
       const w_cost = (w_in / 1_000_000) * 0.23 + (w_out / 1_000_000) * 0.96;
+      const w_cache_cost = (w_cache / 1_000_000) * 0.06;
       head.querySelector("[data-tokens]").textContent = fmtCompact(w_total);
       head.querySelector("[data-cost]").textContent = fmtCost(w_cost);
+      head.querySelector("[data-cache]").textContent = "RCache: " + fmtCost(w_cache_cost);
 
       // bars
       const bars = document.createElement("div");
