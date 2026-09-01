@@ -597,7 +597,7 @@
       const w_cache_cost = (w_cache / 1_000_000) * 0.06;
       head.querySelector("[data-tokens]").textContent = fmtCompact(w_total);
       head.querySelector("[data-cost]").textContent = fmtCost(w_cost);
-      head.querySelector("[data-cache]").textContent = "RCache: " + fmtCost(w_cache_cost);
+      head.querySelector("[data-cache]").textContent = "RC: " + fmtCost(w_cache_cost);
 
       // bars
       const bars = document.createElement("div");
