@@ -18,6 +18,8 @@ class TokensSplit(BaseModel):
     output: int
     total: int
     cost_usd: float
+    cache_read: int = 0
+    cache_write: int = 0
 
 
 class TodayMeta(BaseModel):

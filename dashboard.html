@@ -779,7 +779,10 @@
       const peakTxt = peakH
         ? fmtHourShort(peakH.hour) + " (" + fmtCompact(peakH.tokens) + ")"
         : "—";
-      el("meta-24h").innerHTML = `Всего: <strong>${fmtCompact(today.totals.total)}</strong> · Пик: <strong>${peakTxt}</strong>`;
+      el("meta-24h").innerHTML =
+        `Всего: <strong>${fmtCompact(today.totals.total)}</strong>` +
+        ` · Пик: <strong>${peakTxt}</strong>` +
+        ` · RCache: <strong>${fmtCompact(today.totals.cache_read || 0)}</strong>`;
 
       // 24H stream
       renderHours(today.hourly, curHour);

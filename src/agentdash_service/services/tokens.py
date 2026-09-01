@@ -42,20 +42,25 @@ MSK_OFFSET = "+3 hours"
 
 def _aggregate_by_hour_split(
     con: sqlite3.Connection, start_ts_ms: int
-) -> dict[tuple[date, int], tuple[int, int]]:
-    """Returns {(msk_date, msk_hour): (input_sum, output_sum)} for ts >= start_ts_ms."""
+) -> dict[tuple[date, int], tuple[int, int, int]]:
+    """Returns ``{(msk_date, msk_hour): (in, out, cache_read)}`` for ts >= start_ts_ms."""
     sql = f"""
         SELECT date(ts / 1000, 'unixepoch', '{MSK_OFFSET}') AS msk_date,
                CAST(strftime('%H', ts / 1000, 'unixepoch', '{MSK_OFFSET}') AS INT) AS msk_hour,
                SUM(input_tokens) AS in_sum,
-               SUM(output_tokens) AS out_sum
+               SUM(output_tokens) AS out_sum,
+               COALESCE(SUM(cache_read_tokens), 0) AS cread_sum
         FROM local_runtime_token_usage
         WHERE ts >= ?
         GROUP BY msk_date, msk_hour
     """
-    out: dict[tuple[date, int], tuple[int, int]] = {}
-    for date_str, hour, in_sum, out_sum in con.execute(sql, (start_ts_ms,)):
-        out[(date.fromisoformat(date_str), int(hour))] = (int(in_sum or 0), int(out_sum or 0))
+    out: dict[tuple[date, int], tuple[int, int, int]] = {}
+    for date_str, hour, in_sum, out_sum, cread_sum in con.execute(sql, (start_ts_ms,)):
+        out[(date.fromisoformat(date_str), int(hour))] = (
+            int(in_sum or 0),
+            int(out_sum or 0),
+            int(cread_sum or 0),
+        )
     return out
 
 
@@ -221,7 +226,7 @@ def _weekly_threshold(cap: int, spent: int, days_left: int) -> int | None:
 def _build_today_block(
     today: date,
     now: datetime,
-    hourly_map: dict[tuple[date, int], tuple[int, int]],
+    hourly_map: dict[tuple[date, int], tuple[int, int, int]],
     sessions: int,
     user_messages: int,
     avg: float,
@@ -231,7 +236,7 @@ def _build_today_block(
     # 24 hourly bars
     raw_bars: list[dict[str, Any]] = []
     for h in range(24):
-        in_t, out_t = hourly_map.get((today, h), (0, 0))
+        in_t, out_t, _ = hourly_map.get((today, h), (0, 0, 0))
         total = in_t + out_t
         raw_bars.append({
             "hour": h,
@@ -249,18 +254,22 @@ def _build_today_block(
     # Totals
     total_in = sum(b.input for b in hourly)
     total_out = sum(b.output for b in hourly)
+    total_cache_read = sum(
+        hourly_map.get((today, h), (0, 0, 0))[2] for h in range(24)
+    )
     totals = TokensSplit(
         input=total_in,
         output=total_out,
         total=total_in + total_out,
         cost_usd=compute_cost(total_in, total_out, settings),
+        cache_read=total_cache_read,
     )
 
     # 5 windows today
     windows: list[WindowAgg] = []
     for w in time_svc.WINDOWS:
-        w_in = sum(hourly_map.get((today, h), (0, 0))[0] for h in w["hours"])
-        w_out = sum(hourly_map.get((today, h), (0, 0))[1] for h in w["hours"])
+        w_in = sum(hourly_map.get((today, h), (0, 0, 0))[0] for h in w["hours"])
+        w_out = sum(hourly_map.get((today, h), (0, 0, 0))[1] for h in w["hours"])
         windows.append(WindowAgg(
             name=w["name"],
             label=w["label"],
@@ -317,7 +326,7 @@ def _build_now_session(s: dict[str, Any] | None) -> NowSession | None:
 def _build_weekly_block(
     today: date,
     now: datetime,
-    hourly_map: dict[tuple[date, int], tuple[int, int]],
+    hourly_map: dict[tuple[date, int], tuple[int, int, int]],
 ) -> WeeklyBlock:
     iso = today.isocalendar()
     current_monday = today - timedelta(days=iso[2] - 1)
@@ -342,8 +351,8 @@ def _build_weekly_block(
                 days.append(None)
                 continue
             # Past or today — sum hourly
-            in_sum = sum(hourly_map.get((day_date, h), (0, 0))[0] for h in range(24))
-            out_sum = sum(hourly_map.get((day_date, h), (0, 0))[1] for h in range(24))
+            in_sum = sum(hourly_map.get((day_date, h), (0, 0, 0))[0] for h in range(24))
+            out_sum = sum(hourly_map.get((day_date, h), (0, 0, 0))[1] for h in range(24))
             if in_sum == 0 and out_sum == 0:
                 days.append(None)
                 continue
@@ -384,19 +393,19 @@ def _build_weekly_block(
 def _build_sparklines(
     today: date,
     now: datetime,
-    hourly_map: dict[tuple[date, int], tuple[int, int]],
+    hourly_map: dict[tuple[date, int], tuple[int, int, int]],
 ) -> Sparklines:
     current_hour = now.hour
 
     # today: full 24 hours
     today_points = [
-        sum(hourly_map.get((today, h), (0, 0))) for h in range(24)
+        sum(hourly_map.get((today, h), (0, 0, 0))[:2]) for h in range(24)
     ]
 
     # current: trailing 3 hours ending at current hour
     trailing = [current_hour - 2, current_hour - 1, current_hour]
     current_points = [
-        sum(hourly_map.get((today, h), (0, 0))) for h in trailing
+        sum(hourly_map.get((today, h), (0, 0, 0))[:2]) for h in trailing
     ]
 
     # window: current 5h window
@@ -406,7 +415,7 @@ def _build_sparklines(
         [current_hour],
     )
     window_points = [
-        sum(hourly_map.get((today, h), (0, 0))) for h in window_hours
+        sum(hourly_map.get((today, h), (0, 0, 0))[:2]) for h in window_hours
     ]
 
     return Sparklines(
