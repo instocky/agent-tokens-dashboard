@@ -45,6 +45,22 @@ app.include_router(projects_router.router)
 app.include_router(sessions_router.router)
 
 
+@app.middleware("http")
+async def force_json_charset(request, call_next):
+    """Ensure application/json responses declare charset=utf-8.
+
+    FastAPI's default JSONResponse emits Content-Type: application/json
+    (no charset). Some downstream clients (notably Rainmeter's WebParser)
+    decode as latin-1, producing '???' for any non-ASCII text. This
+    middleware appends `; charset=utf-8` so clients honour UTF-8.
+    """
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("application/json") and "charset" not in ctype.lower():
+        response.headers["content-type"] = "application/json; charset=utf-8"
+    return response
+
+
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
     """Liveness. Always 200 if process is up."""
