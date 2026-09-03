@@ -91,7 +91,7 @@
       display: inline-flex; align-items: baseline; gap: 6px;
       border-left: 1px solid rgba(255,255,255,0.14); padding-left: 8px;
     }
-    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }
     .kpi {
       position: relative;
       padding: 18px 18px 16px; min-height: 168px;
@@ -415,23 +415,14 @@
           <div class="tz-chip" id="tz-chip">MSK (UTC+3)</div>
         </div>
         <section class="kpis">
-          <article class="panel kpi kpi--yellow">
-            <div class="kpi-head">
-              <div>
-                <div class="kpi-title">Текущий момент</div>
-                <div class="kpi-time" id="kpi1-time">—</div>
-              </div>
-            </div>
-            <div class="kpi-value" id="kpi1-value">—</div>
-          </article>
           <article class="panel kpi kpi--blue">
             <div class="kpi-head">
               <div>
                 <div class="kpi-title">Сегодня</div>
-                <div class="kpi-time" id="kpi2-time">—</div>
+                <div class="kpi-time" id="kpi1-time">—</div>
               </div>
             </div>
-            <div class="kpi-value" id="kpi2-value">—</div>
+            <div class="kpi-value" id="kpi1-value">—</div>
           </article>
           <article class="panel kpi kpi--green">
             <div class="kpi-head">
@@ -831,27 +822,18 @@
       const dayRatio = dayCap > 0 ? dayActual / dayCap : 0;
       setHeroPillClass("day-actual", dayRatio);
 
-      // KPI 1 — текущий момент (current session, current hour)
+      // KPI 1 — сегодня
       const curHour = now.getHours();
       const todayDate = today.date;
-      if (sess) {
-        el("kpi1-value").textContent = fmtCompact(sess.tokens.total);
-        el("kpi1-time").textContent = fmtHour(curHour) + ", " + todayDate;
-      } else {
-        el("kpi1-value").textContent = "—";
-        el("kpi1-time").textContent = "00:00–" + pad2(curHour) + ":59, " + todayDate;
-      }
+      el("kpi1-value").textContent = fmtCompact(today.totals.total);
+      el("kpi1-time").textContent = "00:00–" + pad2(curHour) + ":" + pad2(now.getMinutes());
 
-      // KPI 2 — сегодня
-      el("kpi2-value").textContent = fmtCompact(today.totals.total);
-      el("kpi2-time").textContent = "00:00–" + pad2(curHour) + ":" + pad2(now.getMinutes());
-
-      // KPI 3 — рабочее время = current 5h window
+      // KPI 2 — рабочее время = current 5h window
       const curWin = today.windows.find(w => w.is_current) || today.windows[1];
       el("kpi3-value").textContent = fmtCompact(curWin.total);
       el("kpi3-time").textContent = curWin.label + ", сегодня";
 
-      // KPI 4 — активность (user_requests / avg_per_session)
+      // KPI 3 — активность (user_requests / avg_per_session)
       const avgReq = today.meta.avg_requests_per_session;
       el("kpi4-time").textContent = "00:00–" + pad2(curHour) + ":" + pad2(now.getMinutes());
       if (sess && today.meta.sessions > 0) {
