@@ -119,13 +119,15 @@ def _current_session(
     session_id = str(sid_row[0])
 
     tok_row = con.execute(
-        "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) "
+        "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+        "       COALESCE(SUM(cache_read_tokens), 0) "
         "FROM local_runtime_token_usage "
         "WHERE session_id = ? AND ts >= ?",
         (session_id, since_ts_ms),
     ).fetchone()
     input_t = int(tok_row[0]) if tok_row else 0
     output_t = int(tok_row[1]) if tok_row else 0
+    cache_t = int(tok_row[2]) if tok_row else 0
 
     req_row = con.execute(
         "SELECT COUNT(*) FROM local_runtime_message_rows "
@@ -152,6 +154,7 @@ def _current_session(
         "session_id": session_id,
         "input_tokens": input_t,
         "output_tokens": output_t,
+        "cache_read_tokens": cache_t,
         "user_requests": user_requests,
         "path": path,
         "project": project_from_workspace(path),
@@ -308,6 +311,7 @@ def _build_now_session(s: dict[str, Any] | None) -> NowSession | None:
         return None
     in_t = s["input_tokens"]
     out_t = s["output_tokens"]
+    cache_t = s.get("cache_read_tokens", 0)
     return NowSession(
         session_id=s["session_id"],
         tokens=TokensSplit(
@@ -315,6 +319,7 @@ def _build_now_session(s: dict[str, Any] | None) -> NowSession | None:
             output=out_t,
             total=in_t + out_t,
             cost_usd=compute_cost(in_t, out_t, settings),
+            cache_read=cache_t,
         ),
         user_requests=s["user_requests"],
         path=s["path"],

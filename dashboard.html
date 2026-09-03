@@ -536,6 +536,11 @@
       if (abs >= 1_000) return (n / 1_000).toFixed(1) + "K";
       return String(n);
     }
+    function fmtMillions(n) {
+      // Always 2-decimal-millions for cache_read (small totals: "0.23M").
+      if (n == null) return "—";
+      return (n / 1_000_000).toFixed(2) + "M";
+    }
     function fmtCost(usd) {
       if (usd == null) return "—";
       return "$" + usd.toFixed(2);
@@ -800,26 +805,36 @@
         el("hero-project").textContent = sess.project || "(no project)";
         el("hero-duration").textContent = fmtDurationMin(sess.duration_ms);
         const actualTok = sess.tokens.total;
-        const avgTok = today.meta.sessions > 0 ? today.totals.total / today.meta.sessions : 0;
+        // Right slot used to be avg tokens per session across today — replaced
+        // with the CURRENT session's own cache_read (the actionable "free"
+        // budget for the work in flight). Land in the millions (1.5M+ on a
+        // typical working session) — `fmtCompact` renders ≥1M as "X.XXM".
+        const sessCacheRead = sess.tokens.cache_read || 0;
         el("hero-actual").innerHTML = fmtCompact(actualTok) + `<span class="hero-pill__paren">(${sess.user_requests})</span>`;
-        el("hero-cap").innerHTML = fmtCompact(avgTok) + `<span class="hero-pill__paren">(${today.meta.avg_requests_per_session.toFixed(0)})</span>`;
-        const ratio = avgTok > 0 ? actualTok / avgTok : 0;
+        el("hero-cap").innerHTML = fmtCompact(sessCacheRead);
+        const ratio = sessCacheRead > 0 ? actualTok / sessCacheRead : 0;
         setHeroPillClass("hero-actual", ratio);
         // combined pill overall color — set on the actual span
       } else {
         el("hero-session").textContent = "—";
         el("hero-project").textContent = "—";
         el("hero-duration").textContent = "—";
-        el("hero-actual").innerHTML = `—<span class="hero-pill__paren"></span>`;
-        el("hero-cap").innerHTML = `—<span class="hero-pill__paren"></span>`;
+        el("hero-actual").innerHTML = `—`;
+        el("hero-cap").innerHTML = `—`;
       }
 
-      // HERO day pill: today / threshold
+      // HERO day pill: today total / cache_read for the CURRENT session.
+      // Per-day sum across all sessions (today.totals.cache_read) and weekly
+      // aggregate were both tested here — for a 2-session day the day sum
+      // lands at ~2.7M and the weekly sum in the hundreds-of-millions, neither
+      // matches what the user reads as "this session's readCache". The
+      // current session's own cache_read is the actionable "free" budget for
+      // the work actually in flight (1.5M+ on a typical working session).
       const dayActual = today.totals.total;
-      const dayCap = wk.threshold_tokens != null ? wk.threshold_tokens : wk.cap_tokens;
+      const sessCacheRead = sess ? (sess.tokens.cache_read || 0) : 0;
       el("day-actual").textContent = fmtCompact(dayActual);
-      el("day-cap").textContent = fmtCompact(dayCap);
-      const dayRatio = dayCap > 0 ? dayActual / dayCap : 0;
+      el("day-cap").textContent = fmtMillions(sessCacheRead);
+      const dayRatio = sessCacheRead > 0 ? dayActual / sessCacheRead : 0;
       setHeroPillClass("day-actual", dayRatio);
 
       // KPI 1 — сегодня
