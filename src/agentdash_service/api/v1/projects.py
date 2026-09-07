@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ...db import DbConnection
-from ...models.projects import ProjectDetail, ProjectsSnapshot
+from ...models.projects import ProjectDetail, ProjectsActivitySnapshot, ProjectsSnapshot
 from ...services import projects as svc
 from ...services.time import now_in_tz
 
@@ -16,6 +16,18 @@ router = APIRouter(prefix="/api/v1", tags=["projects"])
 def projects_snapshot(con: DbConnection) -> ProjectsSnapshot:
     """Full data for `project-dashboard.html`. One request = one snapshot."""
     return svc.build_snapshot(con, now_in_tz())
+
+
+@router.get("/projects/activity", response_model=ProjectsActivitySnapshot)
+def projects_activity(
+    con: DbConnection,
+    month: str | None = None,
+) -> ProjectsActivitySnapshot:
+    """Project activity for a selected calendar month."""
+    try:
+        return svc.build_activity_snapshot(con, now_in_tz(), month)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/projects/{slug}/detail", response_model=ProjectDetail)

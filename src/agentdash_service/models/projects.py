@@ -50,6 +50,25 @@ class ProjectsSnapshot(BaseModel):
     projects: list[ProjectRow]
 
 
+class ProjectActivityDay(BaseModel):
+    date: str
+    active: bool
+    future: bool
+
+
+class ProjectActivityRow(BaseModel):
+    project: str
+    days: list[ProjectActivityDay]
+    duration_ms: int
+
+
+class ProjectsActivitySnapshot(BaseModel):
+    now_msk: str
+    month: str
+    months: list[str]
+    projects: list[ProjectActivityRow]
+
+
 # ----- /api/v1/projects/{slug}/detail --------------------------------------
 
 

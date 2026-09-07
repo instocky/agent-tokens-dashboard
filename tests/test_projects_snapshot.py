@@ -51,3 +51,17 @@ def test_projects_build_with_pinned_now() -> None:
     assert snap.now_msk == "2026-08-21T12:00:00+03:00"
     assert snap.window.end == "2026-08-21"
     assert isinstance(snap.projects, list)
+
+
+def test_projects_activity_uses_calendar_months() -> None:
+    from agentdash_service.db import get_db
+    from agentdash_service.services.projects import build_activity_snapshot
+
+    with get_db() as con:
+        snap = build_activity_snapshot(
+            con,
+            datetime(2026, 9, 7, 12, 0, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        )
+    assert snap.month == "2026-09"
+    assert len(snap.months) == 12
+    assert all(len(project.days) == 30 for project in snap.projects)

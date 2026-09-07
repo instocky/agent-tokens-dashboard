@@ -366,6 +366,167 @@
       font-size: 12px; line-height: 1;
     }
     .hour-label--future { opacity: 0.4; }
+    .project-activity-range {
+      margin: 7px 0 0;
+      color: #91c9ae;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+    }
+    .project-period-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .project-month-picker { position: relative; }
+    .project-month-trigger {
+      min-width: 174px;
+      padding: 9px 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      color: var(--ink);
+      background: rgba(255,255,255,0.04);
+      font: inherit;
+      letter-spacing: 0.02em;
+      text-align: left;
+      cursor: pointer;
+    }
+    .project-month-trigger[aria-expanded="true"] {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(139,92,246,0.16);
+    }
+    .project-month-trigger:focus-visible,
+    .project-month-option:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .project-month-menu {
+      position: absolute;
+      z-index: 10;
+      top: calc(100% + 8px);
+      right: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      width: 250px;
+      padding: 8px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
+      background: #1d2129;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.34);
+    }
+    .project-month-menu[hidden] { display: none; }
+    .project-month-option {
+      padding: 8px 6px;
+      border: 0;
+      border-radius: 7px;
+      color: #b8cdbd;
+      background: transparent;
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .project-month-option:hover,
+    .project-month-option.is-active {
+      color: #e2f4e8;
+      background: rgba(16,185,129,0.18);
+    }
+    .project-activity-shell {
+      overflow-x: auto;
+      padding: 4px 0 2px;
+    }
+    .project-activity-table {
+      min-width: 1120px;
+      table-layout: fixed;
+    }
+    .project-activity-table th,
+    .project-activity-table td {
+      padding: 9px 8px;
+    }
+    .project-activity-table .activity-project-col {
+      width: 220px;
+    }
+    .project-activity-table .activity-day-col { width: 26px; }
+    .project-activity-table .activity-duration-col {
+      width: 116px;
+      text-align: right;
+    }
+    .project-activity-table .activity-month {
+      padding-bottom: 4px;
+      text-align: center;
+      color: #91c9ae;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+    }
+    .project-activity-table .activity-day-head {
+      padding: 5px 2px 9px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0;
+    }
+    .activity-project {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+      color: #d9eadc;
+    }
+    .activity-day-cell {
+      padding: 9px 2px !important;
+      text-align: center;
+    }
+    .activity-square {
+      display: block;
+      width: 17px;
+      height: 17px;
+      margin: 0 auto;
+      border: 1px dashed rgba(151,178,161,0.38);
+      border-radius: 3px;
+      background: rgba(255,255,255,0.015);
+    }
+    .activity-square.is-active {
+      border-color: #16b981;
+      background: #16b981;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+    }
+    .activity-square.is-future {
+      opacity: 0.34;
+    }
+    .activity-duration {
+      text-align: right;
+      color: #a7d8b7;
+      font-family: "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .project-activity-table tbody tr:last-child td { border-bottom: 0; }
+    .project-activity-empty {
+      padding: 28px 12px !important;
+      color: var(--muted) !important;
+      text-align: center;
+    }
+    .project-activity-legend {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .project-activity-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .project-activity-legend .activity-square {
+      width: 12px;
+      height: 12px;
+      margin: 0;
+    }
     @media (max-width: 980px) {
       .kpis, .weeks { grid-template-columns: 1fr; }
       .chart-head, .hero-top { flex-direction: column; align-items: flex-start; }
@@ -456,6 +617,16 @@
       </article>
     </section>
 
+    <section class="panel chart-panel chart-panel--24h">
+      <div class="chart-head">
+        <p class="eyebrow">24H Stream <span class="eyebrow__date" id="eyebrow-date">—</span></p>
+        <div class="chart-meta" id="meta-24h">Всего: <strong>—</strong> · Пик: <strong>—</strong></div>
+      </div>
+      <div class="chart-shell chart-shell--24h">
+        <div class="hours-24h" id="hours-24h"></div>
+      </div>
+    </section>
+
     <section class="panel chart-panel" id="chart-scale" data-scale="log">
       <div class="chart-head">
         <p class="eyebrow">Weekly Compare</p>
@@ -481,13 +652,38 @@
       </div>
     </section>
 
-    <section class="panel chart-panel chart-panel--24h">
+    <section class="panel chart-panel project-activity-panel" id="project-activity">
       <div class="chart-head">
-        <p class="eyebrow">24H Stream <span class="eyebrow__date" id="eyebrow-date">—</span></p>
-        <div class="chart-meta" id="meta-24h">Всего: <strong>—</strong> · Пик: <strong>—</strong></div>
+        <div>
+          <p class="eyebrow">Project Activity</p>
+          <p class="project-activity-range" id="project-activity-range">—</p>
+        </div>
+        <div class="project-period-control">
+          Месяц
+          <div class="project-month-picker" id="project-month-picker">
+            <button class="project-month-trigger" id="project-month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">—</button>
+            <div class="project-month-menu" id="project-month-menu" role="listbox" hidden></div>
+          </div>
+        </div>
       </div>
-      <div class="chart-shell chart-shell--24h">
-        <div class="hours-24h" id="hours-24h"></div>
+      <div class="project-activity-shell">
+        <table class="project-activity-table">
+          <thead>
+            <tr>
+              <th class="activity-project-col" rowspan="2">Проект</th>
+              <th class="activity-month" id="activity-month" colspan="31">—</th>
+              <th class="activity-duration-col" rowspan="2">Время</th>
+            </tr>
+            <tr id="activity-day-head"></tr>
+          </thead>
+          <tbody id="project-activity-rows">
+            <tr><td class="project-activity-empty" colspan="33">Загрузка…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="project-activity-legend" aria-label="Легенда активности">
+        <span><i class="activity-square is-active"></i> работал</span>
+        <span><i class="activity-square"></i> не работал</span>
       </div>
     </section>
   </main>
@@ -508,6 +704,7 @@
     const SELECTED_DAY_KEY = "agentdash:selectedDay";
     let selectedDay = null;     // "YYYY-MM-DD" — driven by render()
     let lastData = null;        // last snapshot — used for re-render on click
+    let activityMonth = null;
 
     function readSelectedDay() {
       try { return localStorage.getItem(SELECTED_DAY_KEY); }
@@ -562,6 +759,87 @@
     function fmtHour(h) { return pad2(h) + ":00–" + pad2((h + 1) % 24) + ":59"; }
     function fmtHourShort(h) { return pad2(h) + ":00"; }
     function fmtRange(start_h, end_h) { return pad2(start_h) + ":00–" + pad2(end_h) + ":00"; }
+
+    function parseIsoDate(iso) { return new Date(iso + "T12:00:00Z"); }
+    const ACTIVITY_MONTH_NAMES = [
+      "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+      "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+    ];
+    function fmtActivityMonth(month) {
+      const [year, number] = month.split("-");
+      return `${ACTIVITY_MONTH_NAMES[Number(number) - 1]} ${year}`;
+    }
+    function activityMonthDays(month) {
+      const [year, number] = month.split("-").map(Number);
+      const count = new Date(Date.UTC(year, number, 0)).getUTCDate();
+      return Array.from({ length: count }, (_, index) => ({
+        date: `${year}-${pad2(number)}-${pad2(index + 1)}`,
+        active: false,
+        future: false,
+      }));
+    }
+    function fmtActivityDuration(ms) {
+      const minutes = Math.floor((ms || 0) / 60000);
+      return minutes >= 60
+        ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+        : `${minutes}m`;
+    }
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function renderActivityMessage(message) {
+      el("project-activity-rows").innerHTML =
+        `<tr><td class="project-activity-empty" colspan="33">${escapeHtml(message)}</td></tr>`;
+    }
+
+    function renderProjectActivity(data) {
+      activityMonth = data.month;
+      const trigger = el("project-month-trigger");
+      trigger.textContent = fmtActivityMonth(data.month);
+      const menu = el("project-month-menu");
+      menu.innerHTML = data.months.map(month =>
+        `<button class="project-month-option${month === data.month ? " is-active" : ""}" ` +
+        `type="button" role="option" aria-selected="${month === data.month}" data-month="${month}">` +
+        `${fmtActivityMonth(month).replace(/ \d{4}$/, "")}</button>`
+      ).join("");
+      setText("project-activity-range", fmtActivityMonth(data.month));
+
+      const headerDays = data.projects[0]?.days || activityMonthDays(data.month);
+      el("activity-month").colSpan = headerDays.length;
+      el("activity-day-head").innerHTML = headerDays.map(day =>
+        `<th class="activity-day-head activity-day-col" title="${day.date}">${day.date.slice(8)}</th>`
+      ).join("");
+
+      if (!data.projects.length) {
+        renderActivityMessage("Нет проектов в доступном окне");
+        return;
+      }
+      el("project-activity-rows").innerHTML = data.projects.map(row => {
+        const cells = row.days.map(day =>
+          `<td class="activity-day-cell activity-day-col">` +
+          `<span class="activity-square${day.active ? " is-active" : ""}${day.future ? " is-future" : ""}" ` +
+          `title="${day.date}: ${day.future ? "будущий день" : (day.active ? "работал" : "не работал")}"></span></td>`
+        ).join("");
+        return `<tr><td class="activity-project" title="${escapeHtml(row.project)}">${escapeHtml(row.project)}</td>` +
+          cells + `<td class="activity-duration">${fmtActivityDuration(row.duration_ms)}</td></tr>`;
+      }).join("");
+    }
+
+    async function refreshProjectActivity() {
+      try {
+        const url = new URL(API + "/api/v1/projects/activity");
+        if (activityMonth) url.searchParams.set("month", activityMonth);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        renderProjectActivity(await r.json());
+      } catch (e) {
+        console.error("project activity refresh failed:", e);
+        renderActivityMessage("Не удалось загрузить активность проектов");
+      }
+    }
 
     function logPct(total) {
       if (total <= 0) return 0;
@@ -930,8 +1208,32 @@
       });
     })();
 
+    const monthTrigger = el("project-month-trigger");
+    const monthMenu = el("project-month-menu");
+    function setMonthMenuOpen(open) {
+      monthMenu.hidden = !open;
+      monthTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    monthTrigger.addEventListener("click", () => {
+      setMonthMenuOpen(monthMenu.hidden);
+    });
+    monthMenu.addEventListener("click", event => {
+      const option = event.target.closest("[data-month]");
+      if (!option) return;
+      activityMonth = option.dataset.month;
+      setMonthMenuOpen(false);
+      refreshProjectActivity();
+    });
+    document.addEventListener("click", event => {
+      if (!event.target.closest("#project-month-picker")) setMonthMenuOpen(false);
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") setMonthMenuOpen(false);
+    });
     refresh();
+    refreshProjectActivity();
     setInterval(refresh, REFRESH_MS);
+    setInterval(refreshProjectActivity, REFRESH_MS);
   </script>
 </body>
 </html>

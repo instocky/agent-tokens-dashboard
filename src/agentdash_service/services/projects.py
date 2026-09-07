@@ -6,6 +6,7 @@ per-project daily time series.
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 from collections import defaultdict
@@ -14,11 +15,14 @@ from typing import Any
 
 from ..config import TZ, settings
 from ..models.projects import (
+    ProjectActivityDay,
+    ProjectActivityRow,
     ProjectDetail,
     ProjectDetailDay,
     ProjectDetailWindow,
     ProjectHourCell,
     ProjectRow,
+    ProjectsActivitySnapshot,
     ProjectsSnapshot,
     ProjectsWindow,
     ProjectTimeSeries,
@@ -112,6 +116,21 @@ def _tokens_per_session_per_day(
     out: dict[tuple[str, date], tuple[int, int]] = {}
     for sid, date_str, in_sum, out_sum in con.execute(sql, (start_ts_ms, end_ts_ms)):
         out[(str(sid), date.fromisoformat(date_str))] = (int(in_sum or 0), int(out_sum or 0))
+    return out
+
+
+def _project_map_for_sessions(
+    con: sqlite3.Connection, sids: list[str]
+) -> dict[str, str]:
+    """Return {session_id: project} for sessions with workspace metadata."""
+    out: dict[str, str] = {}
+    for sid, rec in _sessions_meta(con, sids).items():
+        workspace_dir = rec.get("workspaceDir")
+        project = project_from_workspace(
+            workspace_dir if isinstance(workspace_dir, str) else None
+        )
+        if project:
+            out[sid] = project
     return out
 
 
@@ -281,6 +300,83 @@ def build_snapshot(
         now_msk=now.isoformat(),
         window=window,
         projects=projects,
+    )
+
+
+def build_activity_snapshot(
+    con: sqlite3.Connection,
+    now: datetime,
+    requested_month: str | None = None,
+) -> ProjectsActivitySnapshot:
+    """Build project activity for a selected calendar month."""
+    today = now.date()
+    months = [f"{today.year}-{month:02d}" for month in range(1, 13)]
+    selected_month = requested_month or f"{today.year}-{today.month:02d}"
+    if selected_month not in months:
+        raise ValueError("requested activity month is not available")
+
+    selected_year, selected_month_number = (
+        int(part) for part in selected_month.split("-")
+    )
+    month_start = date(selected_year, selected_month_number, 1)
+    month_end = date(
+        selected_year,
+        selected_month_number,
+        calendar.monthrange(selected_year, selected_month_number)[1],
+    )
+    catalog_start = date(today.year, 1, 1)
+    catalog_start_ms = time_svc.since_midnight_ms(catalog_start, TZ)
+    # Include the current partial month so recently touched projects remain
+    # visible as inactive in an older selected month.
+    catalog_end_ms = time_svc.end_of_now_ms(now)
+    catalog_sessions = _sessions_in_window(con, catalog_start_ms, catalog_end_ms)
+    sid_to_project = _project_map_for_sessions(con, list(catalog_sessions))
+    projects = set(sid_to_project.values())
+
+    tokens_per_day = _tokens_per_session_per_day(
+        con, catalog_start_ms, catalog_end_ms
+    )
+    project_day_tokens: dict[tuple[str, date], int] = defaultdict(int)
+    for (sid, day), (input_tokens, output_tokens) in tokens_per_day.items():
+        project = sid_to_project.get(sid)
+        if project:
+            project_day_tokens[(project, day)] += input_tokens + output_tokens
+
+    selected_start_ms = time_svc.since_midnight_ms(month_start, TZ)
+    selected_end_ms = min(
+        time_svc.since_midnight_ms(month_end + timedelta(days=1), TZ),
+        catalog_end_ms,
+    )
+    selected_sessions = _sessions_in_window(con, selected_start_ms, selected_end_ms)
+    durations: dict[str, int] = defaultdict(int)
+    for sid, (min_ms, max_ms, _) in selected_sessions.items():
+        project = sid_to_project.get(sid)
+        if project:
+            durations[project] += max(0, max_ms - min_ms)
+
+    rows = []
+    for project in projects:
+        days = [
+            ProjectActivityDay(
+                date=(month_start + timedelta(days=offset)).isoformat(),
+                active=project_day_tokens[
+                    (project, month_start + timedelta(days=offset))
+                ] > 0,
+                future=(month_start + timedelta(days=offset)) > today,
+            )
+            for offset in range((month_end - month_start).days + 1)
+        ]
+        rows.append(ProjectActivityRow(
+            project=project,
+            days=days,
+            duration_ms=durations[project],
+        ))
+    rows.sort(key=lambda row: (row.duration_ms, row.project), reverse=True)
+    return ProjectsActivitySnapshot(
+        now_msk=now.isoformat(),
+        month=selected_month,
+        months=months,
+        projects=rows,
     )
 
 
