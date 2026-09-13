@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Token Dashboard">
+  <title>Token Dashboard</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d2129"/>
+      <stop offset="1" stop-color="#2a1f3a"/>
+    </linearGradient>
+    <linearGradient id="tfill" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="dotfill" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  <!-- dark tile -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#bg)"/>
+  <!-- "T" mark: crossbar + stem, centered around x=16 -->
+  <g fill="url(#tfill)">
+    <rect x="8"  y="10" width="16" height="4"  rx="1.2"/>
+    <rect x="14" y="14" width="4"  height="10" rx="1.2"/>
+  </g>
+  <!-- live indicator dot, top-right -->
+  <circle cx="26" cy="7" r="2.4" fill="url(#dotfill)"/>
+</svg>
