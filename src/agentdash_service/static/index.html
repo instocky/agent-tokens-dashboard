@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentDash</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #181b22;
+      --ink: #f5f7fb;
+      --muted: rgba(216, 223, 236, 0.62);
+      --line: rgba(255, 255, 255, 0.05);
+      --accent: #8b5cf6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI Variable", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #0e1014 0%, #11141a 100%);
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 24px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar .brand { color: var(--ink); font-weight: 800; }
+    .topbar .updated {
+      flex: 1;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .topbar nav { display: flex; gap: 8px; }
+    .topbar a {
+      color: inherit;
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+    .topbar a.active { color: var(--ink); border-color: var(--accent); }
+    .frame {
+      width: 100%;
+      height: calc(100vh - 51px);
+      border: 0;
+      display: block;
+      background: transparent;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">AgentDash</span>
+    <span id="shell-updated" class="updated">—</span>
+    <nav id="nav">
+      <a href="#tokens" data-view="tokens">Tokens</a>
+      <a href="#projects" data-view="projects">Projects</a>
+      <a href="#sessions" data-view="sessions">Sessions</a>
+    </nav>
+  </div>
+  <iframe id="frame" class="frame" title="AgentDash view"></iframe>
+  <script src="/static/app.js"></script>
+</body>
+</html>

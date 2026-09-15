@@ -8,9 +8,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api.v1 import projects as projects_router
@@ -18,6 +21,8 @@ from .api.v1 import sessions as sessions_router
 from .api.v1 import tokens as tokens_router
 from .config import settings
 from .db import get_db
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -78,3 +83,23 @@ async def ready() -> JSONResponse:
         payload: dict[str, Any] = {"status": "not-ready", "reason": str(e)}
         return JSONResponse(status_code=503, content=payload)
     return JSONResponse(status_code=200, content={"status": "ready"})
+
+
+# Static assets (CSS / JS / favicons) — served under /static/*.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# SPA fallback: any path that did not match an /api/v1 route or the
+# /static mount returns index.html. Registered last so explicit routes win.
+# Concrete files in STATIC_DIR (e.g. /tokens.html → static/tokens.html) are
+# served directly so the SPA iframe can load them by relative name.
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str) -> FileResponse:
+    if full_path:
+        candidate = (STATIC_DIR / full_path).resolve()
+        if (
+            candidate.is_file()
+            and candidate.is_relative_to(STATIC_DIR.resolve())
+        ):
+            return FileResponse(candidate)
+    return FileResponse(STATIC_DIR / "index.html")
